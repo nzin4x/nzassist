@@ -4,12 +4,11 @@
 
 import { parse } from './parse.js';
 import { toTask, readNotes, writeNotes, readMeta, isManaged, scheduledAt, toDue, patchMeta } from './task.js';
-import { nextDue, addInterval, parseInterval } from './repeat.js';
+import { nextDue } from './repeat.js';
 import { syncCompanion } from './companion.js';
-import { toCivil, fmtDate, SEOUL_OFFSET_MIN } from './civil.js';
+import { SEOUL_OFFSET_MIN } from './civil.js';
+import { resolveSnooze, SNOOZE_PRESETS } from './snooze.js';
 
-// postpone 입력을 간격 문자열로 정규화한다. 3m → 3mo(달)로 본다 (분은 due에 무의미).
-const normalizeSpec = s => String(s ?? '').trim().replace(/^(\d+)\s*m$/, '$1mo').replace(/\s+/g, '');
 
 const norm = s => String(s ?? '')
   .replace(/\p{Extended_Pictographic}|️|‍/gu, '')
@@ -218,15 +217,25 @@ export function createApi({ tasks, calendar, settings = {} }) {
       return shape(await tasks.patchTask(listId, id, patchMeta(current, { starred: value })), list);
     },
 
-    /** postpone — due를 뒤로 민다. 1h 2d 3w 1mo 등. 시각(at)은 그대로 둔다. */
-    async postpone(listId, id, spec, { now = new Date() } = {}) {
+    /**
+     * 스누즈 — 절대 시각(분 단위까지)으로 옮긴다. postpone과 달리 시각(at)도 함께 바꾸고
+     * 동반 알람을 그 시각으로 다시 만든다 — 애초에 "다시 울리게" 하는 게 목적이라
+     * 시각이 안 바뀌면 스누즈가 아니다.
+     * @param {string} input  '10분 후' 같은 프리셋 문구, 또는 '10m'/'2d'/'내일 9시' 같은 커스텀 입력
+     */
+    async snooze(listId, id, input, { now = new Date() } = {}) {
       const list = (await lists()).find(l => l.id === listId);
       const current = await tasks.getTask(listId, id);
-      const from = current.due ? current.due.slice(0, 10) : fmtDate(toCivil(now, offsetMin));
-      const due = addInterval(from, parseInterval(normalizeSpec(spec)) ?? { count: 1, unit: 'd' });
-      const updated = await tasks.patchTask(listId, id, { due: toDue(due) });
+      const { userNotes, meta } = readNotes(current.notes);
+      const { dateTime } = resolveSnooze(input, { now, offsetMin, defaultTime: defaults.defaultTime, timeZone: defaults.timeZone });
+      const updated = await tasks.patchTask(listId, id, {
+        due: toDue(dateTime),
+        notes: writeNotes(userNotes, { ...meta, at: dateTime.slice(11, 16) })
+      });
       return withCompanion(shape(updated, list), list);
     },
+
+    snoozePresets: () => SNOOZE_PRESETS,
 
     /** 하위 task 추가. parent는 쿼리 파라미터로 넘긴다 (실측). */
     async addSubtask(listId, parentId, text) {
@@ -265,17 +274,18 @@ export async function route(api, method, pathname, query, body) {
   }
 
   if (method === 'POST' && seg[0] === 'preview') return api.preview(body.text);
+  if (method === 'GET' && seg[0] === 'snooze-presets') return api.snoozePresets();
   if (method === 'POST' && seg[0] === 'tasks' && seg.length === 1) {
     return api.create(body.text, { userNotes: body.notes, listId: body.list });
   }
 
-  // /api/tasks/{listId}/{taskId}[/complete|/uncomplete|/star|/postpone|/subtask]
+  // /api/tasks/{listId}/{taskId}[/complete|/uncomplete|/star|/snooze|/subtask]
   if (seg[0] === 'tasks' && seg.length >= 3) {
     const [, listId, taskId, action] = seg;
     if (method === 'POST' && action === 'complete') return api.complete(listId, taskId);
     if (method === 'POST' && action === 'uncomplete') return api.uncomplete(listId, taskId);
     if (method === 'POST' && action === 'star') return api.star(listId, taskId, body.on);
-    if (method === 'POST' && action === 'postpone') return api.postpone(listId, taskId, body.spec);
+    if (method === 'POST' && action === 'snooze') return api.snooze(listId, taskId, body.input);
     if (method === 'POST' && action === 'subtask') return api.addSubtask(listId, taskId, body.text);
     if (method === 'PATCH') return api.update(listId, taskId, body);
     if (method === 'DELETE') return api.remove(listId, taskId);

@@ -246,13 +246,35 @@ footer a:hover, .legal-footer a:hover { color: var(--accent); text-decoration: u
 .composer-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .composer-actions button:disabled { opacity: 0.55; cursor: wait; }
 
-/* 오버레이 (postpone / palette / help) */
+/* 편집 뷰의 빠른 동작 — 완료/서브태스크/스누즈/삭제. 아이콘이 먼저 눈에 들어오게 한다. */
+.composer-ops { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+.op-button {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  flex: 1; min-width: 68px; padding: 10px 6px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+  font: inherit; font-size: 11.5px; font-weight: 500; cursor: pointer;
+}
+.op-button:hover { border-color: var(--accent); background: #e8f0fe; color: #1967d2; }
+.op-icon { font-size: 20px; line-height: 1; }
+.op-danger:hover { border-color: var(--warn); background: #fce8e6; color: var(--warn); }
+
+/* 오버레이 (스누즈 / palette / help) */
 .overlay { position: fixed; inset: 0; background: rgba(32, 33, 36, 0.5); display: flex; align-items: flex-start; justify-content: center; padding-top: 14vh; z-index: 50; }
 .overlay.hidden { display: none; }
 .overlay-box { background: var(--card); border-radius: 12px; padding: 18px; min-width: 320px; max-width: 480px; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28); }
 .overlay-box h3 { margin: 0 0 12px; font-size: 13px; color: var(--muted); font-weight: 500; }
 .overlay-box input { width: 100%; font: inherit; font-size: 15px; padding: 10px 13px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }
 .overlay-box .hint { margin-top: 8px; font-size: 12px; color: var(--muted); }
+
+/* 스누즈 프리셋 — 즉각 인식되는 아이콘 + 문구 그리드 */
+.snooze-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 14px; }
+.snooze-preset {
+  display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink);
+  font: inherit; font-size: 13.5px; font-weight: 500; cursor: pointer; text-align: left;
+}
+.snooze-preset:hover { border-color: var(--accent); background: #e8f0fe; color: #1967d2; }
+.snooze-icon { font-size: 18px; line-height: 1; }
 
 .help-grid { display: grid; grid-template-columns: auto 1fr; gap: 5px 16px; font-size: 13px; }
 .help-grid kbd { font-family: inherit; background: #f1f3f4; border-radius: 4px; padding: 2px 8px; font-size: 12px; justify-self: start; color: #3c4043; }

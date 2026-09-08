@@ -71,9 +71,17 @@ const state = {
   isearch: null,        // f 로 시작한 incremental search 질의
   query: null,          // 상단 통합 검색창의 JQL AST (src/query.js)
   focusedKey: null,     // /t/{taskId} deep link로 들어온 단건
+  snoozePresets: [],    // GET /snooze-presets — 실패해도 DEFAULT_SNOOZE_PRESETS로 대체된다
   undoStack: []         // { label, undo: async fn }
 };
 let pickedFilter = false; // 사용자가 직접 고른 뒤로는 자동 전환하지 않는다
+
+// 서버 프리셋을 못 받아왔을 때만 쓰는 대체값. src/snooze.js의 SNOOZE_PRESETS와 맞춰둔다.
+const DEFAULT_SNOOZE_PRESETS = [
+  { text: '10분 후', icon: '⏱️' }, { text: '30분 후', icon: '⏰' }, { text: '1시간 후', icon: '🕐' },
+  { text: '퇴근 후', icon: '🏃' }, { text: '내일 아침', icon: '🌅' },
+  { text: '주말 아침', icon: '🛌' }, { text: '다음주 아침', icon: '📅' }
+];
 
 const keyOf = t => `${t.listId}/${t.id}`;
 const toggleSelect = key => {
@@ -387,6 +395,13 @@ function openTaskComposer(task = null, initialText = '') {
   const box = openOverlay(`
     <section class="composer" aria-label="할 일 편집">
       <div class="composer-head"><h3>${task ? '할 일 편집' : '새 할 일'}</h3><button class="icon-button" id="composer-close" type="button" aria-label="닫기">×</button></div>
+      ${task ? `
+      <div class="composer-ops" role="group" aria-label="빠른 동작">
+        <button type="button" class="op-button" id="composer-complete" title="완료 처리"><span class="op-icon">✅</span>완료</button>
+        <button type="button" class="op-button" id="composer-subtask" title="하위 할 일 추가"><span class="op-icon">➕</span>하위 할 일</button>
+        <button type="button" class="op-button" id="composer-snooze" title="스누즈"><span class="op-icon">⏰</span>스누즈</button>
+        <button type="button" class="op-button op-danger" id="composer-delete" title="삭제"><span class="op-icon">🗑️</span>삭제</button>
+      </div>` : ''}
       <div class="composer-input-wrap">
         <textarea id="composer-input" rows="4" placeholder="첫 줄: 할 일과 시간\n둘째 줄부터: 메모" autocomplete="off"></textarea>
         <div id="composer-suggest" class="suggest hidden" role="listbox"></div>
@@ -488,6 +503,12 @@ function openTaskComposer(task = null, initialText = '') {
   box.querySelector('#composer-close').onclick = closeOverlay;
   box.querySelector('#composer-cancel').onclick = closeOverlay;
   box.querySelector('#composer-save').onclick = saveComposer;
+  if (task) {
+    box.querySelector('#composer-complete').onclick = async () => { closeOverlay(); await complete(task); };
+    box.querySelector('#composer-subtask').onclick = () => { closeOverlay(); addSubtaskPrompt(task); };
+    box.querySelector('#composer-snooze').onclick = () => { closeOverlay(); askSnooze([task]); };
+    box.querySelector('#composer-delete').onclick = async () => { closeOverlay(); await deleteTasks([task]); };
+  }
   input.focus();
   input.setSelectionRange(input.value.length, input.value.length);
   updatePreview();
@@ -530,14 +551,18 @@ async function toggleStar(targets) {
   }
 }
 
-async function postponeTasks(targets, spec) {
-  const before = targets.map(t => ({ listId: t.listId, id: t.id, due: t.due }));
+/** 스누즈. input은 프리셋 문구('10분 후' 등) 또는 커스텀 입력('10m'/'2d'/'내일 9시'). */
+async function snoozeTasks(targets, input) {
+  // due뿐 아니라 시각(at)도 함께 바뀌므로 undo는 둘 다 되돌려야 한다.
+  const before = targets.map(t => ({ listId: t.listId, id: t.id, due: t.due, at: t.at }));
   try {
-    await Promise.all(targets.map(t => api(`/tasks/${t.listId}/${t.id}/postpone`, { method: 'POST', body: JSON.stringify({ spec }) })));
-    pushUndo(`postpone ${spec} (${targets.length}건)`, () =>
-      Promise.all(before.map(b => api(`/tasks/${b.listId}/${b.id}`, { method: 'PATCH', body: JSON.stringify({ due: b.due }) }))));
+    const results = await Promise.all(targets.map(t =>
+      api(`/tasks/${t.listId}/${t.id}/snooze`, { method: 'POST', body: JSON.stringify({ input }) })));
+    pushUndo(`스누즈 "${input}" (${targets.length}건)`, () =>
+      Promise.all(before.map(b => api(`/tasks/${b.listId}/${b.id}`, { method: 'PATCH', body: JSON.stringify({ due: b.due, at: b.at ?? '' } ) }))));
     await load();
-    setStatus(`${spec} 만큼 미룸 · ${targets.length}건`);
+    const when = results[0]?.scheduledAt ? results[0].scheduledAt.slice(0, 16).replace('T', ' ') : input;
+    setStatus(`${when} 로 스누즈 · ${targets.length}건`);
   } catch (e) {
     setStatus(e.message, false);
   }
@@ -611,7 +636,22 @@ $('search-toggle').addEventListener('click', openSearch);
 $('search-clear').addEventListener('click', () => closeSearch({ clear: true }));
 $('search-close').addEventListener('click', () => closeSearch());
 
-$('search').addEventListener('keydown', e => { searchSuggest.handleKeydown(e); });
+$('search').addEventListener('keydown', e => {
+  // 검색창에 포커스가 있는 동안의 Esc는 검색어를 지운다. 이미 비어 있으면 검색창을 닫는다.
+  // (포커스가 없을 때의 Esc — 목록 선택 해제 등 — 는 이 리스너가 아예 안 걸리므로 별개다)
+  if (isEscapeKey(e) && !searchSuggest.hasItems()) {
+    e.preventDefault();
+    if ($('search').value) {
+      $('search').value = '';
+      state.query = null;
+      render();
+    } else {
+      closeSearch();
+    }
+    return;
+  }
+  searchSuggest.handleKeydown(e);
+});
 $('search').addEventListener('blur', () => {
   setTimeout(() => searchSuggest.close(), 120);
   $('search-wrap').classList.remove('is-focused');
@@ -646,7 +686,7 @@ $('logout').addEventListener('click', async () => {
 
 // ---------------------------------------------------------------- 단축키 (vi 차용)
 //
-// j/k 이동, s/S/d/D star·하위·삭제, p postpone, u undo, / c 입력 포커스,
+// j/k 이동, s/S/d/D star·하위·삭제, p 스누즈, u undo, / c 입력 포커스,
 // f incremental search, ? 도움말, : 명령 팔레트, r 새로고침, Ctrl+클릭 다건 선택.
 // 입력창이나 편집기 등 텍스트 필드에 포커스가 있을 때는 전부 무시한다 — 타이핑을 방해하면 안 된다.
 
@@ -676,24 +716,35 @@ function openOverlay(html) {
 }
 function closeOverlay() { $('overlay').classList.add('hidden'); $('overlay').innerHTML = ''; }
 
-function askPostpone(targets) {
+/**
+ * 스누즈 선택지. 프리셋 버튼(아이콘 + 즉시 인식되는 문구) + 커스텀 입력.
+ * 커스텀은 "10m"/"2d" 같은 상대값과 "내일 9시" 같은 자연어 절대값을 둘 다 받는다
+ * (둘 다 서버의 resolveSnooze가 같은 경로로 처리한다).
+ */
+function askSnooze(targets) {
   if (!targets.length) return;
+  const presets = state.snoozePresets.length ? state.snoozePresets : DEFAULT_SNOOZE_PRESETS;
   const box = openOverlay(`
-    <h3>postpone — ${targets.length}건</h3>
-    <input id="postpone-input" placeholder="1h  2d  3w  1mo" autocomplete="off" />
-    <p class="hint">시간 단위: h(시간) d(일) w(주) mo(개월). Enter로 적용, Esc로 취소</p>
+    <h3>스누즈 — ${targets.length}건</h3>
+    <div class="snooze-grid">
+      ${presets.map(p => `<button type="button" class="snooze-preset" data-text="${p.text}"><span class="snooze-icon">${p.icon}</span>${p.text}</button>`).join('')}
+    </div>
+    <input id="snooze-input" placeholder="커스텀: 10m · 2d · 내일 9시" autocomplete="off" />
+    <p class="hint">Enter로 적용, Esc로 취소</p>
   `);
-  const input = box.querySelector('#postpone-input');
+  const input = box.querySelector('#snooze-input');
+  const run = async text => {
+    if (!text.trim()) return;
+    closeOverlay();
+    await snoozeTasks(targets, text.trim());
+  };
+  for (const btn of box.querySelectorAll('.snooze-preset')) {
+    btn.onclick = () => run(btn.dataset.text);
+  }
   input.focus();
   input.onkeydown = async e => {
     if (isEscapeKey(e)) { e.preventDefault(); closeOverlay(); }
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const spec = input.value.trim();
-      if (!/^\d+(h|d|w|mo)$/.test(spec)) return setStatus('형식: 1h 2d 3w 1mo', false);
-      closeOverlay();
-      await postponeTasks(targets, spec);
-    }
+    if (e.key === 'Enter') { e.preventDefault(); await run(input.value); }
   };
 }
 
@@ -739,7 +790,7 @@ function toggleHelp() {
   const rows = [
     ['j / k', '목록 이동'], ['Ctrl+클릭', '다건 선택'], ['s', 'star 토글'],
     ['S', '하위 task 추가'], ['e / i', '편집 모드'], ['d', '삭제 (확인)'], ['D', '강제 삭제'],
-    ['p', 'postpone'], ['u', 'undo'], ['c', '입력창(할일 추가) 포커스'], ['/', '검색창 포커스'],
+    ['p', '스누즈'], ['u', 'undo'], ['c', '입력창(할일 추가) 포커스'], ['/', '검색창 포커스'],
     ['f', 'incremental search'], ['r', '새로고침'], [':', '명령 팔레트'],
     ['Esc', '선택 해제 / 목록 모드'], ['?', '이 도움말']
   ];
@@ -838,7 +889,7 @@ document.addEventListener('keydown', e => {
     case 'S': if (t) { e.preventDefault(); addSubtaskPrompt(t); } return;
     case 'd': if (t) { e.preventDefault(); deleteTasks(selectedTasks()); } return;
     case 'D': if (t) { e.preventDefault(); deleteTasks(selectedTasks(), { force: true }); } return;
-    case 'p': if (t) { e.preventDefault(); askPostpone(selectedTasks()); } return;
+    case 'p': if (t) { e.preventDefault(); askSnooze(selectedTasks()); } return;
     case 'e': case 'i':
       if (t) {
         e.preventDefault();
@@ -865,5 +916,8 @@ if ('serviceWorker' in navigator) {
     window.location.reload();
   });
 }
+
+// 스누즈 프리셋은 세션당 한 번만 받아온다 — 값이 안 바뀌므로 매 새로고침마다 다시 부를 필요가 없다.
+api('/snooze-presets').then(p => { state.snoozePresets = p; }).catch(() => {});
 
 load();

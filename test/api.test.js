@@ -57,19 +57,33 @@ test('star 인자를 안 주면 토글된다', async () => {
   assert.equal(b.starred, false);
 });
 
-test('postpone은 due만 밀고 시각(at)은 그대로 둔다', async () => {
+test('snooze — 커스텀 상대값은 due와 at을 함께 옮긴다 (postpone과 달리 시각도 바뀐다)', async () => {
   const api = build([seedTask()]); // due 2026-09-07, at 19:00
-  const r = await api.postpone('L1', 't1', '2d');
+  const r = await api.snooze('L1', 't1', '2d', { now: new Date('2026-09-07T10:00:00+09:00') });
   assert.equal(r.due, '2026-09-09');
-  assert.equal(r.at, '19:00');
+  assert.equal(r.at, '10:00'); // 절대 시각으로 옮겨졌으므로 "지금(10:00) + 2일"이다
 });
 
-test('postpone: due가 없는(someday) task는 오늘부터 민다', async () => {
+test('snooze — 프리셋 문구는 분 단위까지 정확히 옮긴다', async () => {
+  const api = build([seedTask()]);
+  const r = await api.snooze('L1', 't1', '10분 후', { now: new Date('2026-09-07T10:00:00+09:00') });
+  assert.equal(r.due, '2026-09-07');
+  assert.equal(r.at, '10:10');
+});
+
+test('snooze — due가 없는(someday) task도 지금 기준으로 옮긴다', async () => {
   const noDate = { id: 't2', listId: 'L1', ...toTask(parse('언젠가', { now: new Date('2026-09-07T10:00:00+09:00') })) };
   delete noDate.due;
   const api = build([noDate]);
-  const r = await api.postpone('L1', 't2', '1w', { now: new Date('2026-09-07T10:00:00+09:00') });
+  const r = await api.snooze('L1', 't2', '1w', { now: new Date('2026-09-07T10:00:00+09:00') });
   assert.equal(r.due, '2026-09-14');
+});
+
+test('snoozePresets — 프리셋 목록을 그대로 노출한다', async () => {
+  const api = build([]);
+  const presets = api.snoozePresets();
+  assert.ok(presets.some(p => p.text === '10분 후'));
+  assert.ok(presets.some(p => p.text === '주말 아침'));
 });
 
 test('하위 task를 추가하면 parent가 붙는다', async () => {
