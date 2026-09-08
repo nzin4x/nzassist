@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#1a73e8" />
+    <meta name="description" content="Google Tasks를 백엔드로 쓰는 개인용 할일 매니저" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="stylesheet" href="/styles.css" />
+    <title>nzassist</title>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div class="brand"><span class="brand-mark">nz</span><span>assist</span></div>
+        <div class="status-pill"><span class="status-dot" id="status-dot"></span><span id="status">연결 중…</span></div>
+      </header>
+
+      <div class="search-wrap" id="search-wrap">
+        <span class="search-icon">⌕</span>
+        <input id="search" autocomplete="off" spellcheck="false"
+               placeholder="검색   ·   #태그 @컨텍스트   ·   updated < 1d   ·   created < 10d and #급함" />
+        <div id="search-suggest" class="suggest hidden" role="listbox"></div>
+      </div>
+
+      <form id="capture" class="capture">
+        <div class="capture-wrap" id="capture-wrap">
+          <input id="input" autocomplete="off" spellcheck="false"
+                 placeholder="노트북 반품하기 19:00   ·   @미혜 불꽃놀이 9/5   ·   가습기 청소 every! 2 weeks" />
+          <div id="suggest" class="suggest hidden" role="listbox"></div>
+        </div>
+        <button type="submit" class="primary">추가</button>
+      </form>
+
+      <section id="preview" class="preview hidden" aria-live="polite">
+        <div class="preview-row">
+          <span class="preview-title" id="pv-title"></span>
+          <span class="chips" id="pv-chips"></span>
+        </div>
+        <div class="preview-warn" id="pv-warn"></div>
+      </section>
+
+      <nav class="filters" id="filters">
+        <button data-filter="overdue" class="filter">밀린 항목 <span class="n" id="n-overdue">0</span></button>
+        <button data-filter="today" class="filter is-active">오늘 <span class="n" id="n-today">0</span></button>
+        <button data-filter="week" class="filter">이번 주 <span class="n" id="n-week">0</span></button>
+        <button data-filter="all" class="filter">전체 <span class="n" id="n-all">0</span></button>
+        <button data-filter="someday" class="filter">날짜 없음 <span class="n" id="n-someday">0</span></button>
+      </nav>
+
+      <div class="lists" id="lists"></div>
+
+      <section class="tasks">
+        <div id="task-list"></div>
+        <p id="empty" class="empty hidden">여기에는 아무것도 없습니다.</p>
+      </section>
+
+      <footer>
+        <span>nzassist</span>
+        <span id="foot-note">Google Tasks 백엔드 · 시각은 notes의 at= 이 원본 · ? 로 단축키 보기</span>
+      </footer>
+    </main>
+    <div id="overlay" class="overlay hidden"></div>
+    <script src="/config.js" onerror="window.NZASSIST_CONFIG = {}"></script>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

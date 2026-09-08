@@ -1,0 +1,32 @@
+# secrets
+.env
+.env.*
+!.env.example
+config.js
+*.pem
+*-service-account*.json
+
+# dependencies
+node_modules/
+
+# build / deploy
+dist/
+.wrangler/
+.aws-sam/
+*.zip
+# scripts/build-static.mjs 가 배포 시점에 만드는 복사본 (src/query.js 가 원본)
+public/query.js
+
+# migration artifacts (원본 데이터/토큰 포함 가능)
+data/todoist-export/
+data/*.local.json
+data/migration-plan.json
+data/migration-preview.json
+data/capability-matrix.json
+
+# os / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.nimbalyst/

@@ -1,0 +1,10 @@
+{
+  "name": "nzassist",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Google Calendar를 백엔드로 쓰는 개인용 할일 매니저",
+  "scripts": {
+    "test": "node --test"
+  }
+}
