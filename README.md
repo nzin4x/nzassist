@@ -42,6 +42,18 @@ EventBridge (주기 실행)
   └─ normalizer: @context 정리, 완료 기준 반복의 다음 회차 생성
 ```
 
+## Calendar deep link
+
+시각이 있는 task의 동반 Calendar 이벤트에는 다음 PWA 링크가 들어갑니다.
+
+```text
+https://assist.nz.pe.kr/t/{taskId}?list={listId}
+```
+
+Calendar 알림을 누르면 PWA가 전체 task 중 해당 항목을 찾아 `전체` 보기에서 단건을 강조하고 화면 중앙으로 이동시킵니다. 완료·미루기·편집은 PWA에서 처리합니다. Calendar 이벤트를 링크 클릭만으로 자동 완료시키지 않는 이유는 링크 미리보기나 crawler가 GET URL을 호출할 수 있기 때문입니다.
+
+Cloudflare Pages의 `public/_redirects`가 `/t/...` 직접 진입을 `index.html`로 넘깁니다. task id가 존재하지 않거나 list id가 맞지 않으면 일반 목록으로 열립니다.
+
 ## 표기 규칙
 
 ```text
@@ -80,3 +92,49 @@ npm test          # 파서 회귀 테스트
 브라우저 쪽 설정은 `config.example.js` → `config.js`입니다.
 
 개인 Gmail 계정의 Calendar는 서비스 계정으로 접근할 수 없어 OAuth refresh token이 필요합니다.
+
+### Google OAuth 게시 상태
+
+운영 Lambda는 웹 OAuth 로그인으로 발급한 세션 쿠키를 우선 사용합니다. Google 로그인 후 사용자별 refresh token이 암호화된 HttpOnly 세션 쿠키에 들어가며, 해당 사용자의 Tasks와 Calendar를 호출합니다. 기존 `.env`의 `GOOGLE_OAUTH_REFRESH_TOKEN`과 `API_TOKEN`은 마이그레이션·롤백을 위한 legacy fallback으로만 남아 있습니다.
+
+테스트 계정을 실제 계정으로 바꾸려면 우선 로컬에서 다음처럼 새 계정의 refresh token을 발급할 수 있습니다.
+
+```text
+node --env-file=.env scripts/google-auth.mjs
+```
+
+운영 로그인은 다음 주소에서 시작합니다.
+
+```text
+https://assist.nz.pe.kr/auth/google/start
+```
+
+로그인 흐름은 다음과 같습니다.
+
+```text
+PWA → Lambda /auth/google/start
+  → Google consent
+  → Lambda /auth/google/callback
+  → 암호화된 HttpOnly 세션 쿠키 발급
+  → 사용자별 Tasks / Calendar 호출
+```
+
+1. Google Cloud Console의 OAuth consent screen에서 앱 정보를 입력합니다.
+2. User type을 실제 대상에 맞게 `External`로 설정하고 테스트 사용자 제한을 확인합니다.
+3. 앱을 `Testing`에서 `In production`으로 게시합니다.
+4. `tasks`와 `calendar` scope가 민감한 범주로 검토되는지 확인하고, Google이 검증을 요구하면 앱 홈페이지·개인정보처리방침·도메인 소유권을 등록합니다.
+5. 운영 로그인에는 데스크톱용 클라이언트가 아니라 `Web application` OAuth client를 사용합니다. 현재 callback은 Lambda Function URL입니다.
+6. 현재 구현은 callback에서 받은 사용자별 refresh token을 AES-256-GCM으로 암호화해 HttpOnly 세션 쿠키에 보관합니다. 세션 저장소가 필요해지는 규모에서는 DynamoDB 또는 Secrets Manager 방식으로 교체합니다.
+7. PWA는 credentialed request로 Lambda에 세션 쿠키를 전달합니다.
+
+현재 `scripts/google-auth.mjs`는 로컬 PKCE + loopback callback으로 한 계정의 refresh token을 받는 도구입니다. 이를 그대로 Pages 로그인에 사용하면 안 됩니다. 운영용 로그인은 다음 흐름이 되어야 합니다.
+
+```text
+PWA → Lambda /auth/google/start
+  → Google consent
+  → Lambda /auth/google/callback
+  → 사용자별 refresh token 저장
+  → PWA session cookie 발급
+```
+
+Google Cloud Console에서 앱을 `In production`으로 게시하는 것은 테스트 사용자 제한을 없애는 설정입니다. 웹 callback·세션·사용자별 토큰 처리는 이미 Lambda에 구현되어 있으며, Google OAuth Web application client에 callback URI가 정확히 등록되어 있어야 합니다.

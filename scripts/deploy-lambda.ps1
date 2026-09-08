@@ -3,7 +3,7 @@
 #
 # Usage:
 #   node scripts/build-lambda.mjs
-#   powershell -File scripts/deploy-lambda.ps1 -CorsOrigin "https://nzassist.pages.dev"
+#   powershell -File scripts/deploy-lambda.ps1 -CorsOrigin "https://assist.nz.pe.kr"
 #
 # First run creates an IAM role, the Lambda function, and its Function URL.
 # Later runs just update code/config (idempotent).
@@ -16,7 +16,7 @@ param(
   [string]$FunctionName = "nzassist-api",
   [string]$RoleName = "nzassist-lambda-role",
   [string]$EnvFile = ".env",
-  [string]$CorsOrigin = "*"
+  [string]$CorsOrigin = "https://assist.nz.pe.kr"
 )
 
 if (-not (Test-Path "dist/lambda/index.mjs")) {
@@ -33,7 +33,7 @@ if (Test-Path $EnvFile) {
     $envVars[$k.Trim()] = $v.Trim()
   }
 }
-foreach ($k in @('GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET', 'GOOGLE_OAUTH_REFRESH_TOKEN')) {
+foreach ($k in @('GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET')) {
   if (-not $envVars[$k]) { Write-Error "$EnvFile is missing $k"; exit 1 }
 }
 if (-not $envVars['API_TOKEN']) {
@@ -43,14 +43,25 @@ if (-not $envVars['API_TOKEN']) {
   $envVars['API_TOKEN'] = [Convert]::ToBase64String($bytes).Replace('+', '-').Replace('/', '_').Replace('=', '')
   Add-Content $EnvFile "API_TOKEN=$($envVars['API_TOKEN'])"
 }
+if (-not $envVars['OAUTH_SESSION_SECRET']) {
+  Write-Output "OAUTH_SESSION_SECRET not found in .env -- generating a new session encryption key."
+  $bytes = New-Object byte[] 32
+  [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+  $envVars['OAUTH_SESSION_SECRET'] = [Convert]::ToBase64String($bytes).Replace('+', '-').Replace('/', '_').Replace('=', '')
+  Add-Content $EnvFile "OAUTH_SESSION_SECRET=$($envVars['OAUTH_SESSION_SECRET'])"
+}
 
 $lambdaEnv = @{
   GOOGLE_OAUTH_CLIENT_ID     = $envVars['GOOGLE_OAUTH_CLIENT_ID']
   GOOGLE_OAUTH_CLIENT_SECRET = $envVars['GOOGLE_OAUTH_CLIENT_SECRET']
   GOOGLE_OAUTH_REFRESH_TOKEN = $envVars['GOOGLE_OAUTH_REFRESH_TOKEN']
+  GOOGLE_OAUTH_REDIRECT_URI  = $(if ($envVars['GOOGLE_OAUTH_REDIRECT_URI']) { $envVars['GOOGLE_OAUTH_REDIRECT_URI'] } else { 'https://l4e3dtacfzcaaexcdlhfqln3qy0gdfpf.lambda-url.ap-northeast-2.on.aws/auth/google/callback' })
+  API_PUBLIC_URL             = $(if ($envVars['API_PUBLIC_URL']) { $envVars['API_PUBLIC_URL'] } else { 'https://l4e3dtacfzcaaexcdlhfqln3qy0gdfpf.lambda-url.ap-northeast-2.on.aws' })
+  OAUTH_SESSION_SECRET       = $envVars['OAUTH_SESSION_SECRET']
   API_TOKEN                  = $envVars['API_TOKEN']
   DEFAULT_TZ                 = $(if ($envVars['DEFAULT_TZ']) { $envVars['DEFAULT_TZ'] } else { 'Asia/Seoul' })
   DEFAULT_DUE_TIME           = $(if ($envVars['DEFAULT_DUE_TIME']) { $envVars['DEFAULT_DUE_TIME'] } else { '09:00' })
+  PWA_BASE_URL               = $(if ($envVars['PWA_BASE_URL']) { $envVars['PWA_BASE_URL'] } else { 'https://assist.nz.pe.kr' })
 }
 $envJsonPath = "dist/lambda-env.json"
 @{ Variables = $lambdaEnv } | ConvertTo-Json -Depth 5 | Set-Content -Encoding ascii $envJsonPath
@@ -99,7 +110,7 @@ if ($functionExists) {
 
 # --- Function URL (create if missing, else just refresh CORS) ---
 $corsPath = "dist/cors.json"
-@{ AllowOrigins = @($CorsOrigin); AllowMethods = @("*"); AllowHeaders = @("content-type", "authorization") } |
+@{ AllowOrigins = @($CorsOrigin); AllowMethods = @("*"); AllowHeaders = @("content-type", "authorization"); AllowCredentials = $true } |
   ConvertTo-Json -Compress | Set-Content -Encoding ascii $corsPath
 
 $functionUrl = aws lambda get-function-url-config --function-name $FunctionName --query "FunctionUrl" --output text

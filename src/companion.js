@@ -8,6 +8,7 @@
 
 export const APP_TAG = 'nzassist';
 const DEFAULT_DURATION_MIN = 30;
+const DEFAULT_PWA_URL = 'https://nzassist.pages.dev';
 
 const pad = n => String(n).padStart(2, '0');
 
@@ -39,18 +40,19 @@ export function parseDuration(value) {
  * @returns {object|null} at 이나 due가 없으면 null (알람을 걸 수 없다)
  */
 export function companionEvent(t, opts = {}) {
-  const { timeZone = 'Asia/Seoul', reminderMinutes = [0] } = opts;
+  const { timeZone = 'Asia/Seoul', reminderMinutes = [0], pwaBaseUrl = DEFAULT_PWA_URL } = opts;
   if (!t.due || !t.at) return null;
 
   const durationMin = parseDuration(t.meta?.dur);
   const end = addMinutesToTime(t.at, durationMin);
 
+  const taskUrl = `${pwaBaseUrl.replace(/\/$/, '')}/t/${encodeURIComponent(t.id)}?list=${encodeURIComponent(t.listId)}`;
   return {
     summary: t.title,
     start: { dateTime: `${t.due}T${t.at}:00`, timeZone },
     end: { dateTime: `${t.due}T${end}:00`, timeZone },
     reminders: { useDefault: false, overrides: reminderMinutes.map(minutes => ({ method: 'popup', minutes })) },
-    description: [t.notes, `nzassist가 관리하는 알람입니다. 수정은 할 일 쪽에서 하세요.`]
+    description: [t.notes, `nzassist에서 열기: ${taskUrl}`, 'nzassist가 관리하는 알람입니다. 수정은 할 일 쪽에서 하세요.']
       .filter(Boolean).join('\n\n'),
     extendedProperties: {
       private: { nz_app: APP_TAG, nz_task: t.id, nz_list: t.listId }

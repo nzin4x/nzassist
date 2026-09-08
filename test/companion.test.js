@@ -30,6 +30,7 @@ test('at 이 있으면 시각이 살아있는 이벤트를 만든다', () => {
   assert.equal(e.end.dateTime, '2026-09-20T23:00:00');
   assert.equal(e.start.timeZone, 'Asia/Seoul');
   assert.equal(e.summary, '노트북 반품하기');
+  assert.match(e.description, /https:\/\/nzassist\.pages\.dev\/t\/task-1\?list=list-1/);
 });
 
 test('소요시간 메타가 종료 시각을 바꾼다', () => {

@@ -23,7 +23,8 @@ const api = createApi({
   calendar: createCalendarClient(auth),
   settings: {
     defaultTime: process.env.DEFAULT_DUE_TIME || '09:00',
-    timeZone: process.env.DEFAULT_TZ || 'Asia/Seoul'
+    timeZone: process.env.DEFAULT_TZ || 'Asia/Seoul',
+    pwaBaseUrl: process.env.PWA_BASE_URL || 'https://assist.nz.pe.kr'
   }
 });
 
@@ -92,6 +93,17 @@ createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' });
     res.end(data);
   } catch {
+    // Keep client-side routes, such as /t/{taskId}, usable on direct navigation.
+    if (req.method === 'GET' && !extname(url.pathname)) {
+      try {
+        const index = await readFile(join(ROOT, 'index.html'));
+        res.writeHead(200, { 'content-type': MIME['.html'] });
+        res.end(index);
+        return;
+      } catch {
+        // Fall through to the normal 404 response if the entry point is missing.
+      }
+    }
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
     res.end('not found');
   }

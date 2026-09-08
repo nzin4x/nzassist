@@ -8,11 +8,13 @@ import { parseQuery, matches as matchesQuery } from './query.js';
 
 const $ = id => document.getElementById(id);
 const cfg = window.NZASSIST_CONFIG || {};
-const API_BASE = `${(cfg.apiBaseUrl || '').replace(/\/$/, '')}/api`;
+const API_ORIGIN = (cfg.apiBaseUrl || '').replace(/\/$/, '');
+const API_BASE = `${API_ORIGIN}/api`;
 
 const api = async (path, opts = {}) => {
   const res = await fetch(`${API_BASE}${path}`, {
     ...opts,
+    credentials: 'include',
     headers: {
       ...(opts.body ? { 'content-type': 'application/json' } : {}),
       ...(cfg.apiToken ? { authorization: `Bearer ${cfg.apiToken}` } : {})
@@ -23,6 +25,20 @@ const api = async (path, opts = {}) => {
   return body;
 };
 
+const auth = { authenticated: false, user: null };
+
+async function refreshAuth() {
+  const res = await fetch(`${API_ORIGIN}/auth/me`, { credentials: 'include' });
+  if (!res.ok) throw new Error('로그인 상태를 확인하지 못했습니다.');
+  const body = await res.json();
+  auth.authenticated = Boolean(body.authenticated);
+  auth.user = body.user ?? null;
+  $('login').classList.toggle('hidden', auth.authenticated);
+  $('logout').classList.toggle('hidden', !auth.authenticated);
+  $('account-name').textContent = auth.user?.name || auth.user?.email || '';
+  $('account-name').classList.toggle('hidden', !auth.authenticated);
+}
+
 const state = {
   tasks: [], lists: [], tags: new Set(), filter: 'today', listId: null,
   shown: [],            // 현재 화면에 보이는 순서 (star 정렬 반영)
@@ -31,6 +47,7 @@ const state = {
   mode: 'nav',          // 'nav' | 'input' | 'search' | 'isearch' — 키 처리를 가른다
   isearch: null,        // f 로 시작한 incremental search 질의
   query: null,          // 상단 통합 검색창의 JQL AST (src/query.js)
+  focusedKey: null,     // /t/{taskId} deep link로 들어온 단건
   undoStack: []         // { label, undo: async fn }
 };
 let pickedFilter = false; // 사용자가 직접 고른 뒤로는 자동 전환하지 않는다
@@ -113,6 +130,7 @@ function render() {
     const key = `${t.listId}/${t.id}`;
     row.className = `task${t.due && t.due < todayStr() ? ' overdue' : ''}`
       + `${state.selected.has(key) ? ' is-selected' : ''}`
+      + `${state.focusedKey === key ? ' is-focused' : ''}`
       + `${i === state.cursor ? ' is-cursor' : ''}`;
     row.dataset.key = key;
     row.onclick = e => {
@@ -170,7 +188,9 @@ function render() {
     box.append(row);
   });
 
+  const focused = box.querySelector('.is-focused');
   const cur = box.querySelector('.is-cursor');
+  if (focused) focused.scrollIntoView({ block: 'center', behavior: 'smooth' });
   if (cur && state.mode === 'nav') cur.scrollIntoView({ block: 'nearest' });
 }
 
@@ -192,9 +212,27 @@ function renderLists() {
 async function load() {
   try {
     setStatus('불러오는 중…');
+    await refreshAuth();
+    if (!auth.authenticated && !cfg.apiToken) {
+      setStatus('Google 로그인 필요');
+      $('empty').classList.remove('hidden');
+      $('empty').textContent = 'Google 로그인 후 할 일을 불러옵니다.';
+      return;
+    }
     const [lists, tasks] = await Promise.all([api('/lists'), api('/tasks')]);
     state.lists = lists;
     state.tasks = tasks;
+    const deepLinkId = decodeURIComponent(location.pathname.match(/^\/t\/([^/]+)\/?$/)?.[1] ?? '');
+    const deepLinkList = new URLSearchParams(location.search).get('list');
+    const focused = deepLinkId && tasks.find(t => t.id === deepLinkId && (!deepLinkList || t.listId === deepLinkList));
+    if (focused) {
+      state.focusedKey = keyOf(focused);
+      state.filter = 'all';
+      state.listId = focused.listId;
+      state.cursor = 0;
+      pickedFilter = true;
+      document.querySelectorAll('.filter').forEach(b => b.classList.toggle('is-active', b.dataset.filter === 'all'));
+    }
     // 추천에 쓸 태그는 메타와 제목 양쪽에서 모은다 (native task도 잡히도록)
     state.tags = new Set();
     for (const t of tasks) {
@@ -210,7 +248,7 @@ async function load() {
     }
     renderLists();
     render();
-    setStatus(`${tasks.length}건 · 리스트 ${lists.length}개`);
+    setStatus(focused ? `집중 보기 · ${focused.title}` : `${tasks.length}건 · 리스트 ${lists.length}개`);
   } catch (e) {
     setStatus(e.message, false);
   }
@@ -508,6 +546,27 @@ const searchSuggest = createSuggestController($('search'), $('search-suggest'), 
   onAccept: () => $('search').dispatchEvent(new Event('input'))
 });
 
+function closeSearch({ clear = false } = {}) {
+  if (clear) {
+    $('search').value = '';
+    state.query = null;
+    render();
+  }
+  searchSuggest.close();
+  $('search-wrap').classList.remove('is-open', 'is-focused');
+  $('search').blur();
+  state.mode = 'nav';
+}
+
+function openSearch() {
+  $('search-wrap').classList.add('is-open');
+  $('search').focus();
+}
+
+$('search-toggle').addEventListener('click', openSearch);
+$('search-clear').addEventListener('click', () => closeSearch({ clear: true }));
+$('search-close').addEventListener('click', () => closeSearch());
+
 $('search').addEventListener('keydown', e => { searchSuggest.handleKeydown(e); });
 $('search').addEventListener('blur', () => {
   setTimeout(() => searchSuggest.close(), 120);
@@ -530,6 +589,17 @@ $('search').addEventListener('input', e => {
   render();
 });
 
+$('login').addEventListener('click', () => {
+  window.location.assign(`${API_ORIGIN}/auth/google/start`);
+});
+
+$('logout').addEventListener('click', async () => {
+  await fetch(`${API_ORIGIN}/auth/logout`, { method: 'POST', credentials: 'include' });
+  auth.authenticated = false;
+  auth.user = null;
+  await load();
+});
+
 // ---------------------------------------------------------------- 단축키 (vi 차용)
 //
 // j/k 이동, s/S/d/D star·하위·삭제, p postpone, u undo, / c 입력 포커스,
@@ -542,7 +612,7 @@ const isTyping = () => {
 };
 
 function focusCapture() { $('input').focus(); }
-function focusSearch() { $('search').focus(); }
+function focusSearch() { openSearch(); }
 
 function moveCursor(delta) {
   if (!state.shown.length) return;

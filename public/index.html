@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#1a73e8" />
     <meta name="description" content="Google Tasks를 백엔드로 쓰는 개인용 할일 매니저" />
+    <link rel="icon" href="/logo.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/logo.svg" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="stylesheet" href="/styles.css" />
     <title>nzassist</title>
@@ -12,14 +14,21 @@
   <body>
     <main class="shell">
       <header class="topbar">
-        <div class="brand"><span class="brand-mark">nz</span><span>assist</span></div>
-        <div class="status-pill"><span class="status-dot" id="status-dot"></span><span id="status">연결 중…</span></div>
+        <a class="brand" href="/" aria-label="nzassist 홈"><img class="brand-logo" src="/logo.svg" alt="" /><span>assist</span></a>
+        <div class="account-bar">
+          <span class="account-name hidden" id="account-name"></span>
+          <button class="account-action" id="login" type="button">Google 로그인</button>
+          <button class="account-action hidden" id="logout" type="button">로그아웃</button>
+          <div class="status-pill"><span class="status-dot" id="status-dot"></span><span id="status">연결 중…</span></div>
+        </div>
       </header>
 
       <div class="search-wrap" id="search-wrap">
-        <span class="search-icon">⌕</span>
+        <button id="search-toggle" class="search-icon" type="button" aria-label="검색 열기" title="검색 열기">⌕</button>
         <input id="search" autocomplete="off" spellcheck="false"
                placeholder="검색   ·   #태그 @컨텍스트   ·   updated < 1d   ·   created < 10d and #급함" />
+        <button id="search-clear" class="search-action" type="button" aria-label="검색어 지우기" title="검색어 지우기">×</button>
+        <button id="search-close" class="search-action" type="button" aria-label="검색 닫기" title="검색 닫기">×</button>
         <div id="search-suggest" class="suggest hidden" role="listbox"></div>
       </div>
 
@@ -58,6 +67,7 @@
       <footer>
         <span>nzassist</span>
         <span id="foot-note">Google Tasks 백엔드 · 시각은 notes의 at= 이 원본 · ? 로 단축키 보기</span>
+        <span class="legal-links"><a href="/privacy">개인정보처리방침</a><a href="/terms">서비스 약관</a></span>
       </footer>
     </main>
     <div id="overlay" class="overlay hidden"></div>

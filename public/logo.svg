@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
+  <title id="title">nzassist</title>
+  <desc id="desc">Blue square logo with a white nz monogram and check mark</desc>
+  <rect width="96" height="96" rx="22" fill="#1a73e8"/>
+  <path d="M22 29h11l20 24V29h11v38H53L33 43v24H22z" fill="#fff"/>
+  <path d="m58 62 7 7 13-16" fill="none" stroke="#b7f0d0" stroke-linecap="round" stroke-linejoin="round" stroke-width="6"/>
+</svg>

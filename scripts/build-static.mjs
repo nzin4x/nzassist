@@ -12,8 +12,10 @@
 import { writeFile, copyFile } from 'node:fs/promises';
 
 const cfg = {
+  // Pages Functions proxy /api and /auth on the app's own origin.
   apiBaseUrl: process.env.API_BASE_URL ?? '',
-  apiToken: process.env.API_TOKEN ?? '',
+  // Production uses the HttpOnly Google session cookie; never ship the legacy token to browsers.
+  apiToken: process.env.PUBLIC_API_TOKEN ?? '',
   defaultTime: process.env.DEFAULT_DUE_TIME ?? '09:00',
   timeZone: process.env.DEFAULT_TZ ?? 'Asia/Seoul'
 };

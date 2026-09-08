@@ -4,7 +4,14 @@
   "start_url": "/",
   "display": "standalone",
   "background_color": "#f3efe5",
-  "theme_color": "#17332e",
+  "theme_color": "#1a73e8",
   "description": "Google Calendar를 백엔드로 쓰는 개인용 할일 매니저",
-  "icons": []
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
 }

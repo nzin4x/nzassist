@@ -8,32 +8,56 @@
 // index.mjs 로 이름만 바꾸고(zip 안에서 상대경로 ./src/... 가 그대로 성립하도록), zip 뒤 업로드한다.
 // 별도 npm 의존성이 없다 — googleapis 대신 fetch만 쓰기로 한 D13 덕분에 node_modules가 필요 없다.
 
-import { authFromEnv, createTasksClient, createCalendarClient, GoogleApiError } from './src/google.js';
+import { authFromEnv, createAuth, createTasksClient, createCalendarClient, GoogleApiError } from './src/google.js';
 import { createApi, route } from './src/api.js';
 import { checkBearer } from './src/auth.js';
+import { clearSessionCookie, getSession, getStateCookies, oauthCallback, oauthStart } from './src/oauth.js';
 
-let api; // 워밈 스타트 사이에 재사용
+const apiByUser = new Map();
 
-function getApi() {
-  if (!api) {
-    const auth = authFromEnv(process.env);
-    api = createApi({
+function getApi(session) {
+  const key = session?.sub || 'legacy';
+  if (!apiByUser.has(key)) {
+    const auth = session
+      ? createAuth({
+          clientId: process.env.GOOGLE_OAUTH_CLIENT_ID,
+          clientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+          refreshToken: session.refreshToken
+        })
+      : authFromEnv(process.env);
+    apiByUser.set(key, createApi({
       tasks: createTasksClient(auth),
       calendar: createCalendarClient(auth),
       settings: {
         defaultTime: process.env.DEFAULT_DUE_TIME || '09:00',
-        timeZone: process.env.DEFAULT_TZ || 'Asia/Seoul'
+        timeZone: process.env.DEFAULT_TZ || 'Asia/Seoul',
+        pwaBaseUrl: process.env.PWA_BASE_URL || 'https://assist.nz.pe.kr'
       }
-    });
+    }));
   }
-  return api;
+  return apiByUser.get(key);
 }
 
 const json = (statusCode, body) => ({
   statusCode,
-  headers: { 'content-type': 'application/json; charset=utf-8' },
+  headers: {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store'
+  },
   body: JSON.stringify(body)
 });
+
+const authError = () => json(401, { error: '로그인이 필요합니다.' });
+
+function withCors(response) {
+  // Lambda Function URL owns CORS headers; adding them here duplicates the response header.
+  return response;
+}
+
+function lambdaResponse(response) {
+  const { cookies, ...rest } = response;
+  return cookies ? { ...rest, cookies } : rest;
+}
 
 function parseBody(event) {
   if (!event.body) return {};
@@ -45,20 +69,41 @@ export const handler = async event => {
   const method = event.requestContext?.http?.method ?? 'GET';
   const path = event.rawPath ?? '/';
 
-  if (method === 'OPTIONS') return { statusCode: 204, headers: {}, body: '' }; // Function URL 네이티브 CORS가 실제 처리
-
-  if (!checkBearer(event.headers, process.env.API_TOKEN)) {
-    return json(401, { error: 'unauthorized' });
-  }
+  if (method === 'OPTIONS') return withCors({ statusCode: 204, headers: {}, body: '' });
 
   const query = Object.fromEntries(new URLSearchParams(event.rawQueryString ?? ''));
+  try {
+    if (method === 'GET' && path === '/auth/google/start') {
+      if (!process.env.GOOGLE_OAUTH_CLIENT_ID || !process.env.GOOGLE_OAUTH_CLIENT_SECRET || !process.env.OAUTH_SESSION_SECRET) {
+        return withCors(json(500, { error: 'Google OAuth 환경변수가 설정되지 않았습니다.' }));
+      }
+      return lambdaResponse(oauthStart(process.env));
+    }
+    if (method === 'GET' && path === '/auth/google/callback') {
+      return lambdaResponse(await oauthCallback({ env: process.env, query, cookies: getStateCookies(event.headers, event.cookies) }));
+    }
+    if (method === 'POST' && path === '/auth/logout') {
+      return lambdaResponse(withCors({ statusCode: 200, headers: { 'content-type': 'application/json' }, cookies: [clearSessionCookie()], body: JSON.stringify({ ok: true }) }));
+    }
+    if (method === 'GET' && path === '/auth/me') {
+      const session = getSession(event.headers, process.env);
+      return withCors(session ? json(200, { authenticated: true, user: { email: session.email, name: session.name } }) : json(200, { authenticated: false }));
+    }
+  } catch (e) {
+    console.error(`${method} ${path} → 500: ${e.message}`);
+    return withCors(json(500, { error: 'Google 로그인 처리에 실패했습니다.' }));
+  }
+
+  const session = getSession(event.headers, process.env);
+  const legacyAuthorized = Boolean(process.env.API_TOKEN) && checkBearer(event.headers, process.env.API_TOKEN);
+  if (!session && !legacyAuthorized) return withCors(authError());
 
   try {
-    const result = await route(getApi(), method, path, query, parseBody(event));
-    return json(200, result);
+    const result = await route(getApi(session), method, path, query, parseBody(event));
+    return withCors(json(200, result));
   } catch (e) {
     const status = e.status ?? (e instanceof GoogleApiError ? e.status : 500);
     console.error(`${method} ${path} → ${status}: ${e.message}`);
-    return json(status, { error: e.message, reason: e.reason });
+    return withCors(json(status, { error: e.message, reason: e.reason }));
   }
 };

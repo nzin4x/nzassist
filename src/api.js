@@ -73,7 +73,10 @@ export function createApi({ tasks, calendar, settings = {} }) {
   async function withCompanion(shaped, list) {
     if (!calendar) return shaped;
     try {
-      const { gcal, changed } = await syncCompanion(calendar, shaped, { timeZone: defaults.timeZone });
+      const { gcal, changed } = await syncCompanion(calendar, shaped, {
+        timeZone: defaults.timeZone,
+        pwaBaseUrl: defaults.pwaBaseUrl
+      });
       if (!changed || gcal === (shaped.meta.gcal ?? null)) return shaped;
       const current = await tasks.getTask(shaped.listId, shaped.id);
       const updated = await tasks.patchTask(shaped.listId, shaped.id, patchMeta(current, { gcal: gcal ?? '' }));
