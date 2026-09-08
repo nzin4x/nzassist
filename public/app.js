@@ -852,4 +852,18 @@ document.addEventListener('keydown', e => {
   }
 }, true);
 
+// 서비스워커 등록. 예전엔 sw.js 파일만 있고 등록하는 코드가 없어서 캐시가 아예
+// 안 걸리거나(신규 방문자), 과거에 걸린 캐시가 갱신될 방법이 없었다(기존 방문자).
+// controllerchange에서 한 번만 새로고침해 최신 코드를 반영한다 — 모바일에서
+// "새로고침해도 안 바뀜" 문제의 원인이었다.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (reloading) return;
+    reloading = true;
+    window.location.reload();
+  });
+}
+
 load();

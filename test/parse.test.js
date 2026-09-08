@@ -323,3 +323,59 @@ test('같은 날이라도 아직 안 지난 시각은 올해', () => {
 test('연도를 쓰면 지난 시각이어도 그대로 (의도가 분명하다)', () => {
   assert.equal(night('회고 2026-09-07 21:00').start.dateTime, '2026-09-07T21:00:00');
 });
+
+// --- 순우리말 시각, 이번주/다음주 요일 (2026-09-09 리포트: AI 수준 preview가 안 됨) ---
+
+const WED = new Date('2026-09-09T15:00:00+09:00'); // 오늘 = 수요일
+const wed = text => parse(text, { now: WED });
+
+test('순우리말 시각: 열시 = 10시', () => {
+  const r = wed('내일 저녁 열시에 감자캐기');
+  assert.equal(r.title, '감자캐기');
+  assert.equal(r.start.dateTime, '2026-09-10T22:00:00');
+});
+
+test('순우리말 시각: 열두시 (12 + 저녁 보정은 12시를 넘기지 않는다)', () => {
+  assert.match(wed('저녁 열두시에 야식').start.dateTime, /T12:00:00$/);
+});
+
+test('순우리말 시각: 한시 = 오후 1시', () => {
+  assert.match(wed('오후 한시에 병원').start.dateTime, /T13:00:00$/);
+});
+
+test('시각 뒤 "반" 은 30분 (숫자 시각에도, 순우리말 시각에도)', () => {
+  assert.match(wed('오후 3시 반에 픽업').start.dateTime, /T15:30:00$/);
+  assert.match(wed('오후 세시 반에 픽업').start.dateTime, /T15:30:00$/);
+});
+
+test('이번주 금요일 — 이번 달력주의 금요일', () => {
+  // 오늘(수) + 2일 = 금요일
+  assert.equal(wed('이번주 금요일에 yy 하기').title, 'yy 하기');
+  assert.equal(wed('이번주 금요일에 yy 하기').start.dateTime, '2026-09-11T09:00:00');
+});
+
+test('다음주 토요일 — 다음 달력주로 넘어간다 (이번주 토요일이 아니다)', () => {
+  const r = wed('다음주 토요일 7시 등산가기');
+  assert.equal(r.title, '등산가기');
+  assert.equal(r.start.dateTime, '2026-09-19T07:00:00'); // 이번주 토요일(9/12)이 아니라 그 다음(9/19)
+});
+
+test('수식어 없는 요일은 다가오는 요일 (오늘 포함)', () => {
+  assert.equal(wed('수요일에 정산').start.dateTime.slice(0, 10), '2026-09-09'); // 오늘이 수요일
+  assert.equal(wed('금요일에 정산').start.dateTime.slice(0, 10), '2026-09-11');
+});
+
+test('"이번주 X요일" 이 이미 지났으면 과거 날짜를 그대로 낸다 (명시적 지정이므로)', () => {
+  // 오늘이 수요일일 때 "이번주 월요일"은 이틀 전이다
+  assert.equal(wed('이번주 월요일에 제출').start.dateTime.slice(0, 10), '2026-09-07');
+});
+
+test('"토요일 마다" 반복은 여전히 반복으로 읽힌다 (일회성 요일 추출과 충돌하지 않는다)', () => {
+  const r = wed('청소 토요일 마다');
+  assert.equal(r.repeat.rrule, 'RRULE:FREQ=WEEKLY;BYDAY=SA');
+});
+
+test('제목에서 찌꺼기 조사 "에"만 지운다 — "학교에"처럼 단어에 붙은 것은 안 건드린다', () => {
+  assert.equal(wed('학교에 가기 내일').title, '학교에 가기');
+  assert.equal(wed('내일 저녁 10시에 감자캐기').title, '감자캐기');
+});

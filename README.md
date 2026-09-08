@@ -1,45 +1,40 @@
 # nzassist
 
-Google Calendar를 백엔드로 쓰는 개인용 할일 매니저입니다.
+Google Tasks를 백엔드로 쓰는 개인용 할일 매니저입니다.
 1차 목표는 Todoist 유료 계정을 끊고도 알림을 놓치지 않는 것이고,
 장기적으로는 todo / calendar / Obsidian note를 하나로 묶는 것입니다.
 
 작업 목록과 결정 근거는 [TODO.md](TODO.md)에 있습니다.
 
-## 왜 Google Tasks가 아니라 Calendar인가
+## 왜 Google Calendar가 아니라 Tasks인가
 
-Tasks 백엔드는 시각을 정상적으로 저장합니다. 문제는 **공개 Tasks API v1이 그걸 노출하지 않는다**는 것입니다.
+원하는 건 **todo**입니다. 완료 상태를 갖고, 끝날 때까지 남아 있고, 날짜 없는 항목도 되고,
+밀린 항목이 쌓입니다 — 이걸 실제로 하는 건 Tasks뿐입니다. Calendar 이벤트는 시간이 지나면
+그냥 흘러가 버려서 todo가 아닙니다. (한때 반대로 설계했다가 되돌렸습니다 — 완료·someday·overdue가
+전부 깨졌습니다.)
 
-> It isn't possible to read or write the time that a task is scheduled for using the API.
-> — [Tasks API 레퍼런스](https://developers.google.com/workspace/tasks/reference/rest/v1/tasks)
-
-deadline·반복·알림 필드도 API에는 없고, 릴리스 노트는 2024-07 이후 멈춰 있습니다.
-"19:00에 울리는 항목"을 안정적인 공개 API로 **만들어야** 하는 이상, 선택지는 Calendar Events뿐입니다.
+문제는 **Tasks 공개 API가 시각(time of day)을 저장하지 못한다**는 것입니다 (실측 확인 — `insert`/`patch`
+모두 `19:00`을 `00:00:00`으로 자릅니다. Tasks 백엔드 자체는 시각을 저장하지만, 공개 API v1이 그걸
+노출하지 않을 뿐입니다). 그래서 시각이 필요한 항목에만 **동반 Calendar 이벤트**를 만들어 알람을 답니다 —
+이벤트는 데이터의 주인이 아니라 부속 알람 장치입니다.
 
 | | Tasks API | Calendar Events API |
 |---|---|---|
-| 시각 | ❌ 날짜만 | `start.dateTime` ✅ |
-| 소요시간 | ❌ | `start`/`end` ✅ |
-| 알림 | ❌ | `reminders.overrides` 최대 5개 ✅ |
-| 반복 | ❌ | RFC5545 RRULE ✅ |
-| 메타데이터 | ❌ | `extendedProperties` 300개·32KB, 검색 가능 ✅ |
-| 증분 동기화 | `updatedMin` | `syncToken` ✅ |
-| 완료 체크 | ✅ | ❌ (→ PWA와 완료 링크로 보완) |
+| 완료 상태 · 날짜 없는 항목 · 하위 작업 | ✅ | ❌ |
+| 시각(time of day) | ❌ 날짜만 | ✅ `start.dateTime` |
+| 소요시간 · 반복(RRULE) · 알림 | ❌ | ✅ |
+| 메타데이터 저장 | `notes` 하단 블록 | `extendedProperties` |
 
 ## 구조
 
 ```text
-PWA (Cloudflare Pages)
+PWA (Cloudflare Pages, 정적)
   └─ 한 줄 입력 → 규칙 기반 파서 → 제안 카드 확인 → 저장
-        │
+        │  (세션 쿠키로 인증)
         ▼
-AWS API Gateway + Lambda
-  ├─ Google Calendar API (이벤트 CRUD, 알림, RRULE)
-  └─ DynamoDB (사용자 설정 · OAuth refresh token · syncToken 커서)
-        ▲
-        │
-EventBridge (주기 실행)
-  └─ normalizer: @context 정리, 완료 기준 반복의 다음 회차 생성
+AWS Lambda Function URL  (API Gateway 없음 — 단일 개인용 엔드포인트라 불필요)
+  ├─ Google Tasks API   (할일 CRUD, 완료 처리 → 반복이면 다음 회차 생성)
+  └─ Google Calendar API (시각 있는 task의 동반 알람 이벤트만)
 ```
 
 ## Calendar deep link
@@ -60,9 +55,9 @@ Cloudflare Pages의 `public/_redirects`가 `/t/...` 직접 진입을 `index.html
 <사람이 읽는 제목> [@컨텍스트] [#태그 ...]
 ```
 
-- `@컨텍스트` — 저장 시 title에서 제거되고 `nz_context`가 됩니다. 2개 이상이면 첫 번째만 쓰고 나머지는 `#태그`로 내려갑니다.
-- `#태그` — native Calendar 앱에서 보이도록 title에 그대로 남습니다.
-- 설정값(`nz_rep`, `nz_priority` 등)은 title이 아니라 `extendedProperties`에 들어갑니다.
+- `@컨텍스트` — 저장 시 title에서 제거되고 Google Tasks의 **리스트**가 됩니다. 2개 이상이면 첫 번째만 쓰고 나머지는 `#태그`로 내려갑니다.
+- `#태그` — native Tasks 앱에서 보이도록 title에 그대로 남습니다.
+- 설정값(`rep`, `at`, `context` 등)은 title이 아니라 `notes` 하단의 `---nzassist---` 블록에 들어갑니다 (Tasks에는 `extendedProperties`가 없어서 직접 만든 저장소입니다).
 
 입력 예시:
 
@@ -83,15 +78,17 @@ Cloudflare Pages의 `public/_redirects`가 `/t/...` 직접 진입을 `index.html
 npm test          # 파서 회귀 테스트
 ```
 
-정적 PWA라 빌드 단계가 없습니다. `index.html`을 `localhost`로 서빙하면 됩니다
-(Service Worker와 Notification은 `localhost` 또는 HTTPS에서만 동작합니다).
+정적 PWA라 빌드 단계가 없습니다. `node --env-file=.env scripts/dev-server.mjs` 로
+`public/`을 서빙하면 됩니다 (Service Worker와 Notification은 `localhost` 또는 HTTPS에서만 동작합니다).
+배포 시 `public/`을 그대로 Cloudflare Pages 출력 디렉터리로 씁니다.
 
 ## 설정
 
 `.env.example`을 `.env`로 복사해 채웁니다. `.env`는 커밋되지 않습니다.
-브라우저 쪽 설정은 `config.example.js` → `config.js`입니다.
+브라우저 쪽 설정은 `public/config.example.js` → `public/config.js`이며, 배포 시에는
+`scripts/build-static.mjs`가 환경변수로부터 자동 생성합니다.
 
-개인 Gmail 계정의 Calendar는 서비스 계정으로 접근할 수 없어 OAuth refresh token이 필요합니다.
+개인 Gmail 계정의 Tasks/Calendar는 서비스 계정으로 접근할 수 없어 OAuth가 필요합니다.
 
 ### Google OAuth 게시 상태
 

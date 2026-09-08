@@ -34,13 +34,18 @@ const unitKey = word => {
 
 const WEEKDAY_EN = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
 const WEEKDAY_KO = { 일: 0, 월: 1, 화: 2, 수: 3, 목: 4, 금: 5, 토: 6 };
+// 순우리말 시각. "열한"·"열두"가 "열"의 접두어라 알파벳 alternation에서 먼저 와야 한다.
+const KOREAN_HOUR = { 열한: 11, 열두: 12, 한: 1, 두: 2, 세: 3, 네: 4, 다섯: 5, 여섯: 6, 일곱: 7, 여덟: 8, 아홉: 9, 열: 10 };
+const HOUR_WORD = '(열한|열두|한|두|세|네|다섯|여섯|일곱|여덟|아홉|열)';
 const BYDAY = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 
 const UNIT_WORD = '(min(?:ute)?s?|hours?|days?|weeks?|months?|years?|분|시간|일|주|개월|달|년)';
 
 const cut = (s, match) => s.replace(match, ' ');
-const tidy = s => s.replace(/\s{2,}/g, ' ').trim();
+// 시각/날짜 구절을 잘라내고 나면 "...에 감자캐기"처럼 조사만 덜렁 남을 때가 있다.
+// 홀로 남은 조사 토큰만 지운다 — "학교에"처럼 단어에 붙어 있으면 안 건드린다.
+const tidy = s => s.replace(/\s{2,}/g, ' ').replace(/(^|\s)(에|에는|에서)(?=\s|$)/g, '$1').replace(/\s{2,}/g, ' ').trim();
 
 // --- 반복 -------------------------------------------------------------------
 
@@ -185,11 +190,19 @@ function extractTime(text) {
     add(match, h, 0);
   }
 
-  for (const match of rest.matchAll(/(오전|오후|저녁|밤|아침)?\s*(\d{1,2})\s*시\s*(?:(\d{1,2})\s*분)?/g)) {
+  for (const match of rest.matchAll(/(오전|오후|저녁|밤|아침)?\s*(\d{1,2})\s*시\s*(?:(\d{1,2})\s*분|(반))?/g)) {
     let h = Number(match[2]);
     if (['오후', '저녁', '밤'].includes(match[1]) && h < 12) h += 12;
     if (['오전', '아침'].includes(match[1]) && h === 12) h = 0;
-    add(match, h, match[3] ? Number(match[3]) : 0);
+    add(match, h, match[4] ? 30 : (match[3] ? Number(match[3]) : 0));
+  }
+
+  // 순우리말 시각: 열시 / 저녁 열시 / 열시 반 (10:30)
+  for (const match of rest.matchAll(new RegExp(`(오전|오후|저녁|밤|아침)?\\s*${HOUR_WORD}\\s*시\\s*(반)?`, 'g'))) {
+    let h = KOREAN_HOUR[match[2]];
+    if (['오후', '저녁', '밤'].includes(match[1]) && h < 12) h += 12;
+    if (['오전', '아침'].includes(match[1]) && h === 12) h = 0;
+    add(match, h, match[3] ? 30 : 0);
   }
 
   const selected = candidates.sort((a, b) => a.index - b.index).at(-1);
@@ -222,6 +235,27 @@ function extractDate(text) {
   if (m) return { rest: cut(rest, m[0]), date: { m: MONTHS.indexOf(m[1].toLowerCase()) + 1, d: Number(m[2]) }, hasYear: false };
 
   return { rest, date: null, hasYear: false };
+}
+
+// 한 번짜리 요일 지정. "토요일 마다"류 반복은 extractRepeat가 먼저 소비하므로
+// (파이프라인상 이 함수보다 앞서 실행된다) 여기 남는 요일은 전부 1회성이다.
+function extractWeekdayDate(text) {
+  let rest = text;
+
+  // 다음주 금요일 / 다음 주 금요일 -> 반드시 다음 달력주
+  let m = rest.match(/다음\s*주\s*([일월화수목금토])요일/);
+  if (m) return { rest: cut(rest, m[0]), weekday: WEEKDAY_KO[m[1]], weekOffset: 1 };
+
+  // 이번주 금요일 / 이번 주 금요일 / 금주 금요일 -> 이번 달력주. 이미 지난 요일이어도
+  // "이번주"라고 명시했으니 날짜를 명시한 것과 같게 취급한다 (연도 명시와 동일한 원칙).
+  m = rest.match(/(?:이번|금)\s*주\s*([일월화수목금토])요일/);
+  if (m) return { rest: cut(rest, m[0]), weekday: WEEKDAY_KO[m[1]], weekOffset: 0 };
+
+  // 수식어 없는 "금요일" -> 다가오는 요일 (오늘 포함, 최대 6일 뒤)
+  m = rest.match(/([일월화수목금토])요일/);
+  if (m) return { rest: cut(rest, m[0]), weekday: WEEKDAY_KO[m[1]], weekOffset: null };
+
+  return { rest, weekday: undefined, weekOffset: null };
 }
 
 function extractRelative(text) {
@@ -285,6 +319,9 @@ export function parse(text, opts = {}) {
   const dt = extractDate(rest);
   rest = dt.rest;
 
+  const wd = extractWeekdayDate(rest);
+  rest = wd.rest;
+
   // --- 시작 시각 결정 ---
   const [dh, dmi] = defaultTime.split(':').map(Number);
   let start;
@@ -308,6 +345,18 @@ export function parse(text, opts = {}) {
     } else if (rep.weekdayHint !== undefined) {
       const cur = new Date(Date.UTC(today.y, today.m - 1, today.d)).getUTCDay();
       base = addDays({ ...today, ...time }, (rep.weekdayHint - cur + 7) % 7);
+    } else if (wd.weekday !== undefined) {
+      const cur = new Date(Date.UTC(today.y, today.m - 1, today.d)).getUTCDay();
+      if (wd.weekOffset === null) {
+        // 수식어 없음: 다가오는 요일 (오늘 포함)
+        base = addDays({ ...today, ...time }, (wd.weekday - cur + 7) % 7);
+      } else {
+        // 이번주/다음주: 월요일 기준 달력주로 계산한다 (음수가 나올 수 있다 — "이번주"인데
+        // 이미 지난 요일이면 과거 날짜가 되고, 그건 의도된 동작이다).
+        const isoCur = (cur + 6) % 7;
+        const isoTarget = (wd.weekday + 6) % 7;
+        base = addDays({ ...today, ...time }, (isoTarget - isoCur) + wd.weekOffset * 7);
+      }
     } else if (rep.lastDayOfMonth) {
       base = { ...today, d: new Date(Date.UTC(today.y, today.m, 0)).getUTCDate(), ...time };
       if (compareDate(base, today) < 0) base = addMonths(base, 1);
@@ -327,7 +376,7 @@ export function parse(text, opts = {}) {
     // 알림은 지난 시각으로 걸 수 없다. 날짜를 명시하지 않았는데 오늘의 그 시각이
     // 이미 지났으면 다음 날을 뜻한 것으로 본다.
     // (밤 10시에 "20:00" 이라고 쓰면 내일 저녁 8시다)
-    const dateWasGiven = dt.date || rep.dateHint || rep.weekdayHint !== undefined
+    const dateWasGiven = dt.date || rep.dateHint || rep.weekdayHint !== undefined || wd.weekday !== undefined
       || rep.monthdayHint !== undefined || rep.lastDayOfMonth || rel.relative;
     if (!dateWasGiven && fmtDateTime(base) <= fmtDateTime(today)) {
       base = addDays(base, 1);
