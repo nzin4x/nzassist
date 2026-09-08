@@ -788,7 +788,7 @@ async function runCommand(cmd) {
 function toggleHelp() {
   if (!$('overlay').classList.contains('hidden') && $('overlay').dataset.kind === 'help') return closeOverlay();
   const rows = [
-    ['j / k', '목록 이동'], ['Ctrl+클릭', '다건 선택'], ['s', 'star 토글'],
+    ['j / k', '목록 이동'], ['x / Ctrl+클릭', '다건 선택 토글'], ['s', 'star 토글'],
     ['S', '하위 task 추가'], ['e / i', '편집 모드'], ['d', '삭제 (확인)'], ['D', '강제 삭제'],
     ['p', '스누즈'], ['u', 'undo'], ['c', '입력창(할일 추가) 포커스'], ['/', '검색창 포커스'],
     ['f', 'incremental search'], ['r', '새로고침'], [':', '명령 팔레트'],
@@ -878,6 +878,7 @@ document.addEventListener('keydown', e => {
   switch (e.key) {
     case 'j': e.preventDefault(); moveCursor(1); return;
     case 'k': e.preventDefault(); moveCursor(-1); return;
+    case 'x': if (t) { e.preventDefault(); toggleSelect(keyOf(t)); } return; // Ctrl+클릭과 같은 다건 선택 토글
     case 'c': e.preventDefault(); focusCapture(); return;
     case '/': e.preventDefault(); focusSearch(); return;
     case 'f': e.preventDefault(); startIncrementalSearch(); return;

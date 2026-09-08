@@ -10,9 +10,12 @@
 // 나머지는 기본 리스트로 보내고 notes의 context= 로만 구분한다.
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { tasksFromEnv } from '../src/google.js';
+import { tasksFromEnv, clientFromEnv } from '../src/google.js';
 import { convert } from '../src/todoist.js';
-import { readMeta, isManaged } from '../src/task.js';
+import { readMeta, isManaged, patchMeta } from '../src/task.js';
+import { syncCompanion } from '../src/companion.js';
+
+const PWA_BASE_URL = process.env.PWA_BASE_URL || 'https://assist.nz.pe.kr';
 
 const arg = (n, d) => process.argv.find(a => a.startsWith(`--${n}=`))?.split('=')[1] ?? d;
 const confirm = process.argv.includes('--confirm');
@@ -28,6 +31,7 @@ const projects = JSON.parse(await readFile('data/todoist-export/projects.json', 
 const todos = JSON.parse(await readFile('data/todoist-export/tasks.json', 'utf8'));
 
 const tasks = tasksFromEnv();
+const cal = clientFromEnv();
 const lists = await tasks.listTaskLists();
 const primary = lists[0];
 
@@ -135,17 +139,41 @@ for (const p of toCreate) {
 
 let ok = 0;
 let failed = 0;
+let alarmed = 0;
+let alarmFailed = 0;
 for (const r of rows) {
   const list = r.target.list ?? created.get(r.todoist.project_id);
   try {
-    await tasks.insertTask(list.id, r.task);
+    const inserted = await tasks.insertTask(list.id, r.task);
     ok++;
-    if (ok % 25 === 0) console.log(`   ${ok}/${rows.length}`);
+
+    // 시각(at=)이 있는 항목만 동반 알람을 만든다 — Tasks API는 시각을 못 담으므로
+    // 이 이벤트가 없으면 "정시에 울린다"는 이 앱의 핵심 가치가 이관에서 빠진다 (D6).
+    const m = readMeta(inserted);
+    if (m.at) {
+      try {
+        const { gcal } = await syncCompanion(cal, {
+          id: inserted.id, listId: list.id, title: inserted.title,
+          due: inserted.due?.slice(0, 10), at: m.at, meta: m, notes: '', completed: false
+        }, { pwaBaseUrl: PWA_BASE_URL });
+        if (gcal) {
+          await tasks.patchTask(list.id, inserted.id, patchMeta(inserted, { gcal }));
+          alarmed++;
+        }
+      } catch (e) {
+        alarmFailed++;
+        console.error(`   알람 실패: ${r.task.title.slice(0, 40)} — ${e.message}`);
+      }
+    }
+
+    if (ok % 25 === 0) console.log(`   ${ok}/${rows.length} (알람 ${alarmed}건)`);
   } catch (e) {
     failed++;
     console.error(`   실패: ${r.task.title.slice(0, 40)} — ${e.message}`);
   }
+  await new Promise(r => setTimeout(r, 120)); // 연속 호출 쿼터를 피한다 (task + calendar 두 번 호출된다)
 }
 
-console.log(`\n완료: ${ok}건${failed ? ` · 실패 ${failed}건` : ''}`);
-console.log(`되돌리기: node --env-file=.env scripts/purge.mjs --batch=${BATCH} --confirm`);
+console.log(`\n완료: task ${ok}건${failed ? ` · 실패 ${failed}건` : ''} · 알람 ${alarmed}건${alarmFailed ? ` · 알람 실패 ${alarmFailed}건` : ''}`);
+console.log(`마음에 안 들면 통째로 되돌릴 수 있습니다 (task + 알람 이벤트 전부 삭제):`);
+console.log(`  node --env-file=.env scripts/purge.mjs --batch=${BATCH} --confirm`);
