@@ -483,12 +483,19 @@ Tasks API는 시각을 숨기지만 **Calendar API로는 그대로 읽힌다.**
     - IAM 역할(`nzassist-lambda-role`, AWSLambdaBasicExecutionRole만 부착)도 스크립트가 자동 생성
     - CORS는 현재 `*` (임시) — Cloudflare Pages 도메인이 정해지면
       `deploy-lambda.ps1 -CorsOrigin "https://<project>.pages.dev"` 로 좁힐 것
-- [ ] Cloudflare Pages 프로젝트 생성 후 GitHub 저장소 연결 (대시보드에서 1회 — API로 자동화 불가,
-      GitHub App 설치·OAuth 승인이 필요해서다)
-    - Build command: `node scripts/build-static.mjs`
-    - Build output directory: `public`
-    - 환경변수: `API_BASE_URL`(Function URL), `API_TOKEN`(deploy 스크립트 출력값)
-- [ ] `git init` 첫 커밋 → `github.com/nzin4x/nzassist` push
+- [x] **Cloudflare Pages 배포 완료 (2026-09-08), git 연동 없이 direct upload로:**
+    - `wrangler pages project create nzassist` + `wrangler pages deploy public` (CLI만으로 완결)
+    - **최초 Cloudflare 토큰은 읽기 전용이라 프로젝트 생성이 막혔다** — `Authentication error [code: 10000]`.
+      재발급받은 토큰(`cfat_…`, Pages:Edit 포함)으로 해결. 토큰 종류를 헷갈리기 쉬우니 주의:
+      정상 API Token은 `cfat_` 접두사, 이번에 한 번 잘못 온 값(`cfk_…`)은 인증 자체가 실패했다
+    - production 배포 확인: `https://nzassist.pages.dev` — 실계정 Google Tasks 데이터 정상 로드
+    - CORS를 `*`에서 실제 도메인(`https://nzassist.pages.dev`)으로 좁힘, 프리플라이트·실호출 둘 다 검증
+    - GitHub 연동은 대시보드 1회 조작(App 설치·OAuth 승인)이 필요해 API로 자동화 불가 —
+      **그래서 git 연동을 안 쓰고 direct upload로 우회했다.** 앞으로 배포는
+      `node scripts/build-static.mjs`(API_BASE_URL/API_TOKEN 환경변수) → `wrangler pages deploy public`
+- [ ] **GitHub push는 여전히 막힘.** 처음엔 Credential Manager 팝업에서 멈춤(사람 손 필요),
+      이후 받은 PAT도 `Bad credentials` — 재확인 필요. Cloudflare Pages는 git 연동 없이도 동작하므로
+      **이 항목은 배포와 무관하고, 저장소 백업 목적으로만 남아 있다**
 - [ ] 상시 운영 전 OAuth 동의 화면을 `In production` 으로 전환 (Testing은 refresh token이 7일 만료 — Phase 1 참고)
 
 ---

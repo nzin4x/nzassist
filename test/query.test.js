@@ -87,7 +87,7 @@ test('updatedAt/createdAt이 없으면 비교는 거짓', () => {
 
 test('복합: 태그 + 기간 + 또는', () => {
   const t = task();
-  assert.equal(search('#집안일 and updated < 1d or @없음', t), true);
+  assert.equal(search('#집안일 and updated < 1d or @없음', t, NOW), true);
 });
 
 test('닫는 괄호가 없으면 에러', () => {
@@ -95,6 +95,6 @@ test('닫는 괄호가 없으면 에러', () => {
 });
 
 test('실전 예시: 하루 안에 바뀐 급함 태그', () => {
-  assert.equal(search('#급함 and updated < 1d', task()), true);
-  assert.equal(search('#급함 and updated < 1d', task({ updatedAt: daysAgo(3) })), false);
+  assert.equal(search('#급함 and updated < 1d', task(), NOW), true);
+  assert.equal(search('#급함 and updated < 1d', task({ updatedAt: daysAgo(3) }), NOW), false);
 });
