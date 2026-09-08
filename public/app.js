@@ -26,6 +26,29 @@ const api = async (path, opts = {}) => {
 };
 
 const auth = { authenticated: false, user: null };
+const CACHE_KEY = 'nzassist_task_cache_v1';
+
+function saveLocalCache() {
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify({ tasks: state.tasks, lists: state.lists, savedAt: Date.now() })); }
+  catch (e) { console.debug('[nzassist] local cache write skipped', e); }
+}
+
+function readLocalCache() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
+    return cached?.tasks && cached?.lists ? cached : null;
+  } catch (e) {
+    console.debug('[nzassist] local cache read skipped', e);
+    return null;
+  }
+}
+
+function applyTasks(tasks, lists) {
+  state.tasks = tasks;
+  state.lists = lists;
+  renderLists();
+  render();
+}
 
 async function refreshAuth() {
   const res = await fetch(`${API_ORIGIN}/auth/me`, { credentials: 'include' });
@@ -108,7 +131,7 @@ function render() {
     if (el) el.textContent = inList.filter(fn).length;
   }
 
-  let shown = inList.filter(FILTERS[state.filter]);
+  let shown = inList.filter(t => t.pending || FILTERS[state.filter](t));
   // 상단 통합 검색 — 탭 필터와 AND로 결합된다
   if (state.query) shown = shown.filter(t => matchesQuery(state.query, t));
   // f — incremental search: 눈에 보이는 것 중에서만 빠르게 좁힌다
@@ -131,12 +154,13 @@ function render() {
     row.className = `task${t.due && t.due < todayStr() ? ' overdue' : ''}`
       + `${state.selected.has(key) ? ' is-selected' : ''}`
       + `${state.focusedKey === key ? ' is-focused' : ''}`
+      + `${state.focusedKey && state.focusedKey !== key ? ' is-dimmed' : ''}`
       + `${i === state.cursor ? ' is-cursor' : ''}`;
     row.dataset.key = key;
     row.onclick = e => {
       if (e.target.closest('button, input, .task-title')) return;
       if (e.ctrlKey || e.metaKey) toggleSelect(key);
-      else { state.cursor = i; render(); }
+      else openTaskComposer(t);
     };
 
     const check = document.createElement('button');
@@ -151,8 +175,8 @@ function render() {
     title.className = 'task-title';
     if (t.starred) { const s = document.createElement('span'); s.className = 'star'; s.textContent = '★ '; title.append(s); }
     title.append(document.createTextNode(t.title));
-    title.title = '클릭하면 편집';
-    title.onclick = () => editTitle(title, t);
+    title.title = '편집 열기';
+    title.onclick = e => e.ctrlKey || e.metaKey ? toggleSelect(key) : openTaskComposer(t);
 
     const meta = document.createElement('div');
     meta.className = 'task-meta';
@@ -173,7 +197,7 @@ function render() {
     timeBtn.title = t.at
       ? (t.meta?.gcal ? '알람이 걸려 있습니다. 눌러서 변경' : '시각만 설정됨 (알람 없음)')
       : '시각을 넣으면 캘린더 알람이 걸립니다';
-    timeBtn.onclick = () => toggleEditor(row, t);
+    timeBtn.onclick = e => e.ctrlKey || e.metaKey ? toggleSelect(key) : openTaskComposer(t);
     meta.append(timeBtn);
 
     main.append(title, meta);
@@ -219,9 +243,14 @@ async function load() {
       $('empty').textContent = 'Google 로그인 후 할 일을 불러옵니다.';
       return;
     }
+    const cached = readLocalCache();
+    if (cached) {
+      applyTasks(cached.tasks, cached.lists);
+      setStatus('로컬 캐시 · 서버 동기화 중…');
+    }
     const [lists, tasks] = await Promise.all([api('/lists'), api('/tasks')]);
-    state.lists = lists;
-    state.tasks = tasks;
+    applyTasks(tasks, lists);
+    saveLocalCache();
     const deepLinkId = decodeURIComponent(location.pathname.match(/^\/t\/([^/]+)\/?$/)?.[1] ?? '');
     const deepLinkList = new URLSearchParams(location.search).get('list');
     const focused = deepLinkId && tasks.find(t => t.id === deepLinkId && (!deepLinkList || t.listId === deepLinkList));
@@ -347,65 +376,121 @@ function createSuggestController(input, box, { onAccept } = {}) {
 }
 
 /** 시각 편집기. Tasks API가 시각을 못 담으므로 at= 메타 + 동반 이벤트로 처리한다. */
-function toggleEditor(row, t) {
-  const open = row.querySelector('.editor');
-  if (open) return open.remove();
-
-  const box = document.createElement('div');
-  box.className = 'editor';
-
-  const date = Object.assign(document.createElement('input'), { type: 'date', value: t.due ?? '' });
-  const time = Object.assign(document.createElement('input'), { type: 'time', value: t.at ?? '09:00' });
-
-  const dur = document.createElement('select');
-  for (const [v, label] of [['15m', '15분'], ['30m', '30분'], ['1h', '1시간'], ['2h', '2시간']]) {
-    dur.append(Object.assign(document.createElement('option'), {
-      value: v, textContent: label, selected: (t.meta?.dur ?? '30m') === v
-    }));
-  }
-
-  const save = Object.assign(document.createElement('button'), { className: 'primary sm', textContent: '저장' });
-  save.onclick = async () => {
-    await patch(t, { due: date.value || null, at: time.value, dur: dur.value });
-  };
-
-  const clear = Object.assign(document.createElement('button'), { className: 'ghost sm', textContent: '시간 없애기' });
-  clear.onclick = async () => { await patch(t, { at: '' }); };
-
-  const hint = document.createElement('span');
-  hint.className = 'hint';
-  hint.textContent = '시각을 넣으면 캘린더에 알람이 걸립니다';
-
-  box.append(date, time, dur, save, clear, hint);
-  row.append(box);
-  time.focus();
+function composerText(task) {
+  if (!task) return '';
+  const repeat = task.repeat ? `every${task.repeat.mode === 'after' ? '!' : ''} ${task.repeat.interval}` : '';
+  const command = [task.title, task.context ? `@${task.context}` : '', task.due ?? '', task.at ?? '', repeat].filter(Boolean).join(' ');
+  return [command, task.notes ?? ''].filter(Boolean).join('\n');
 }
 
-/**
- * 제목 클릭 = 편집. 별도 폼을 두지 않고 입력 기반으로 간다.
- * 저장하면 서버가 다시 파싱하므로 `@리스트`, `19:00`, `every! 2 weeks` 를 그대로 쓸 수 있다.
- */
-function editTitle(titleEl, t) {
-  const original = [...titleEl.childNodes]; // star 아이콘 포함, 취소 시 그대로 복원
-  const input = document.createElement('input');
-  input.className = 'title-edit';
-  input.value = [t.title, t.context ? `@${t.context}` : '', t.at ?? ''].filter(Boolean).join(' ');
+function openTaskComposer(task = null, initialText = '') {
+  const box = openOverlay(`
+    <section class="composer" aria-label="할 일 편집">
+      <div class="composer-head"><h3>${task ? '할 일 편집' : '새 할 일'}</h3><button class="icon-button" id="composer-close" type="button" aria-label="닫기">×</button></div>
+      <div class="composer-input-wrap">
+        <textarea id="composer-input" rows="4" placeholder="첫 줄: 할 일과 시간\n둘째 줄부터: 메모" autocomplete="off"></textarea>
+        <div id="composer-suggest" class="suggest hidden" role="listbox"></div>
+      </div>
+      <section class="composer-preview" id="composer-preview" aria-live="polite">
+        <div class="preview-row"><strong id="composer-preview-title"></strong><span class="chips" id="composer-preview-chips"></span></div>
+        <div class="preview-warn" id="composer-preview-warn"></div>
+      </section>
+      <div class="composer-actions"><button class="ghost sm" id="composer-cancel" type="button">취소</button><button class="primary sm" id="composer-save" type="button">${task ? '변경 저장' : '추가'}</button></div>
+    </section>
+  `);
+  const input = box.querySelector('#composer-input');
+  const preview = box.querySelector('#composer-preview');
+  const suggest = createSuggestController(input, box.querySelector('#composer-suggest'));
+  input.value = initialText || composerText(task);
 
-  const close = () => titleEl.replaceChildren(...original);
-  input.onkeydown = async e => {
-    if (e.key === 'Escape') { e.preventDefault(); close(); }
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const text = input.value.trim();
-      if (!text || text === t.title) return close();
-      await patch(t, { text });
+  const updatePreview = async () => {
+    suggest.update();
+    const firstLine = input.value.split(/\r?\n/, 1)[0].trim();
+    if (!firstLine) return preview.classList.add('hidden');
+    try {
+      const p = await api('/preview', { method: 'POST', body: JSON.stringify({ text: firstLine }) });
+      box.querySelector('#composer-preview-title').textContent = p.title || '(제목 없음)';
+      const chips = [`<span class="chip when">${p.scheduledAt.slice(0, 16).replace('T', ' ')}</span>`];
+      if (p.context) chips.push(`<span class="chip ctx">@${p.context}</span>`);
+      for (const tag of p.tags ?? []) chips.push(`<span class="chip tag">#${tag}</span>`);
+      if (p.repeat) chips.push(`<span class="chip rep">${p.repeat.mode === 'after' ? '완료기준' : '반복'} ${p.repeat.interval}</span>`);
+      box.querySelector('#composer-preview-chips').innerHTML = chips.join('');
+      box.querySelector('#composer-preview-warn').textContent = (p.warnings ?? []).join(' / ');
+      preview.classList.remove('hidden');
+    } catch { preview.classList.add('hidden'); }
+  };
+  input.addEventListener('input', updatePreview);
+  const saveComposer = async () => {
+    const lines = input.value.split(/\r?\n/);
+    const text = lines.shift().trim();
+    if (!text) return setStatus('첫 줄에 할 일을 입력하세요', false);
+    const notes = lines.join('\n').trim();
+    const saveButton = box.querySelector('#composer-save');
+    saveButton.disabled = true;
+    try {
+      if (task) {
+        await api(`/tasks/${task.listId}/${task.id}`, { method: 'PATCH', body: JSON.stringify({ text, notes }) });
+        closeOverlay();
+        await load();
+        setStatus('변경 저장됨');
+      } else {
+        const list = state.lists.find(item => item.id === state.listId) || state.lists[0];
+        const localTask = {
+          id: `local-${Date.now()}`,
+          listId: list?.id || 'local',
+          listTitle: list?.title || '동기화 대기',
+          title: text,
+          due: null,
+          at: null,
+          scheduledAt: null,
+          completed: false,
+          starred: false,
+          parent: null,
+          notes,
+          meta: {},
+          managed: false,
+          repeat: null,
+          tags: [],
+          context: null,
+          pending: true
+        };
+        state.tasks.unshift(localTask);
+        saveLocalCache();
+        closeOverlay();
+        render();
+        setStatus('추가됨 · 서버 동기화 중…');
+        api('/tasks', { method: 'POST', body: JSON.stringify({ text, notes }) })
+          .then(created => {
+            const index = state.tasks.findIndex(item => item.id === localTask.id);
+            if (index >= 0) state.tasks.splice(index, 1, created);
+            saveLocalCache();
+            render();
+            setStatus('추가됨 · 서버 동기화 완료');
+            console.info('[nzassist] create synced', created.id);
+          })
+          .catch(e => {
+            state.tasks = state.tasks.filter(item => item.id !== localTask.id);
+            saveLocalCache();
+            render();
+            setStatus(`추가 실패 · 화면에서 제거됨: ${e.message}`, false);
+            console.error('[nzassist] create sync failed', e);
+          });
+      }
+    } catch (e) {
+      saveButton.disabled = false;
+      setStatus(e.message, false);
     }
   };
-  input.onblur = close;
-
-  titleEl.replaceChildren(input);
+  input.addEventListener('keydown', e => {
+    if (e.ctrlKey && e.key === 'Enter') { e.preventDefault(); saveComposer(); return; }
+    if (!suggest.handleKeydown(e) && e.key === 'Escape') closeOverlay();
+  });
+  box.querySelector('#composer-close').onclick = closeOverlay;
+  box.querySelector('#composer-cancel').onclick = closeOverlay;
+  box.querySelector('#composer-save').onclick = saveComposer;
   input.focus();
-  input.setSelectionRange(0, t.title.length);
+  input.setSelectionRange(input.value.length, input.value.length);
+  updatePreview();
 }
 
 async function patch(t, changes) {
@@ -462,71 +547,30 @@ async function postponeTasks(targets, spec) {
 async function deleteTasks(targets, { force = false } = {}) {
   if (!force && !confirm(`${targets.length}건을 삭제할까요?`)) return;
   const snapshot = targets.map(t => ({ ...t }));
-  try {
-    await Promise.all(targets.map(t => api(`/tasks/${t.listId}/${t.id}`, { method: 'DELETE' })));
-    pushUndo(`삭제 (${targets.length}건, 재생성으로 되돌림)`, () =>
-      Promise.all(snapshot.map(t => api('/tasks', {
-        method: 'POST',
-        body: JSON.stringify({ text: `${t.title}${t.due ? ` ${t.due}${t.at ? ' ' + t.at : ''}` : ''}`, list: t.listId })
-      }))));
-    state.selected.clear();
-    await load();
-    setStatus(`삭제됨 · ${targets.length}건`);
-  } catch (e) {
-    setStatus(e.message, false);
-  }
+  state.tasks = state.tasks.filter(t => !targets.some(target => keyOf(target) === keyOf(t)));
+  state.selected.clear();
+  saveLocalCache();
+  render();
+  setStatus(`삭제됨 · ${targets.length}건 · 서버 동기화 중…`);
+  Promise.all(targets.map(t => api(`/tasks/${t.listId}/${t.id}`, { method: 'DELETE' })))
+    .then(() => {
+      pushUndo(`삭제 (${targets.length}건, 재생성으로 되돌림)`, () =>
+        Promise.all(snapshot.map(t => api('/tasks', {
+          method: 'POST',
+          body: JSON.stringify({ text: `${t.title}${t.due ? ` ${t.due}${t.at ? ' ' + t.at : ''}` : ''}`, list: t.listId })
+        }))));
+      console.info('[nzassist] delete synced', targets.map(keyOf));
+    })
+    .catch(e => {
+      state.tasks.push(...snapshot);
+      saveLocalCache();
+      render();
+      setStatus(`삭제 실패 · 복원됨: ${e.message}`, false);
+      console.error('[nzassist] delete sync failed', e);
+    });
 }
 
-const captureSuggest = createSuggestController($('input'), $('suggest'));
-
-// 입력하는 동안 파싱 결과를 미리 보여준다 (저장 전에 확인)
-let previewTimer;
-$('input').addEventListener('keydown', e => { captureSuggest.handleKeydown(e); });
-$('input').addEventListener('blur', () => {
-  setTimeout(() => captureSuggest.close(), 120);
-  $('capture-wrap').classList.remove('is-focused');
-  state.mode = 'nav';
-});
-$('input').addEventListener('focus', () => {
-  $('capture-wrap').classList.add('is-focused');
-  state.mode = 'input';
-});
-
-$('input').addEventListener('input', e => {
-  clearTimeout(previewTimer);
-  captureSuggest.update();
-  const text = e.target.value.trim();
-  if (!text) return $('preview').classList.add('hidden');
-  previewTimer = setTimeout(async () => {
-    try {
-      const p = await api('/preview', { method: 'POST', body: JSON.stringify({ text }) });
-      $('pv-title').textContent = p.title || '(제목 없음)';
-      const chips = [];
-      chips.push(`<span class="chip when">${p.scheduledAt.slice(0, 10)} ${p.scheduledAt.slice(11, 16)}</span>`);
-      if (p.context) chips.push(`<span class="chip ctx">@${p.context}</span>`);
-      for (const tag of p.tags ?? []) chips.push(`<span class="chip tag">#${tag}</span>`);
-      if (p.repeat) chips.push(`<span class="chip rep">${p.repeat.mode === 'after' ? '완료기준' : '반복'} ${p.repeat.interval}</span>`);
-      $('pv-chips').innerHTML = chips.join('');
-      $('pv-warn').textContent = (p.warnings ?? []).join(' / ');
-      $('preview').classList.remove('hidden');
-    } catch { /* 미리보기는 실패해도 조용히 넘어간다 */ }
-  }, 180);
-});
-
-$('capture').addEventListener('submit', async e => {
-  e.preventDefault();
-  const text = $('input').value.trim();
-  if (!text) return;
-  try {
-    setStatus('저장 중…');
-    await api('/tasks', { method: 'POST', body: JSON.stringify({ text }) });
-    $('input').value = '';
-    $('preview').classList.add('hidden');
-    await load();
-  } catch (err) {
-    setStatus(err.message, false);
-  }
-});
+$('new-task-fab').addEventListener('click', () => openTaskComposer());
 
 for (const b of document.querySelectorAll('.filter')) {
   b.onclick = () => {
@@ -610,8 +654,9 @@ const isTyping = () => {
   const el = document.activeElement;
   return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
 };
+const isEscapeKey = e => e.key === 'Escape' || e.key === 'Esc';
 
-function focusCapture() { $('input').focus(); }
+function focusCapture() { openTaskComposer(); }
 function focusSearch() { openSearch(); }
 
 function moveCursor(delta) {
@@ -641,7 +686,7 @@ function askPostpone(targets) {
   const input = box.querySelector('#postpone-input');
   input.focus();
   input.onkeydown = async e => {
-    if (e.key === 'Escape') { e.preventDefault(); closeOverlay(); }
+    if (isEscapeKey(e)) { e.preventDefault(); closeOverlay(); }
     if (e.key === 'Enter') {
       e.preventDefault();
       const spec = input.value.trim();
@@ -703,6 +748,11 @@ function toggleHelp() {
     <div class="help-grid">${rows.map(([k, d]) => `<kbd>${k}</kbd><span>${d}</span>`).join('')}</div>
   `);
   box.dataset.kind = 'help';
+  box.tabIndex = -1;
+  box.onkeydown = e => {
+    if (isEscapeKey(e)) { e.preventDefault(); closeOverlay(); }
+  };
+  box.focus();
 }
 
 // f — 눈에 보이는 task로 빠르게 이동하는 incremental search. Esc로 중지.
@@ -718,13 +768,23 @@ function startIncrementalSearch() {
     if (e.key === 'Escape') { e.preventDefault(); stopIncrementalSearch(); }
     if (e.key === 'ArrowDown') { e.preventDefault(); moveCursor(1); }
     if (e.key === 'ArrowUp') { e.preventDefault(); moveCursor(-1); }
-    if (e.key === 'Enter') { e.preventDefault(); stopIncrementalSearch(); }
+    if (e.key === 'Enter') { e.preventDefault(); commitIncrementalSearch(); }
   };
 }
 function stopIncrementalSearch() {
   state.isearch = null;
   state.mode = 'nav';
   closeOverlay();
+  render();
+}
+
+function commitIncrementalSearch() {
+  const text = state.isearch?.trim() || '';
+  stopIncrementalSearch();
+  if (!text) return;
+  $('search').value = text;
+  openSearch();
+  try { state.query = parseQuery(text); } catch { state.query = null; }
   render();
 }
 
@@ -755,6 +815,12 @@ async function addSubtaskPrompt(parent) {
 }
 
 document.addEventListener('keydown', e => {
+  if (!$('overlay').classList.contains('hidden') && isEscapeKey(e) && !isTyping()) {
+    e.preventDefault();
+    closeOverlay();
+    state.mode = 'nav';
+    return;
+  }
   if (state.mode === 'isearch' || isTyping()) return;
 
   const t = currentTask();
@@ -776,14 +842,14 @@ document.addEventListener('keydown', e => {
     case 'e': case 'i':
       if (t) {
         e.preventDefault();
-        const el = document.querySelector(`[data-key="${CSS.escape(keyOf(t))}"] .task-title`);
-        if (el) editTitle(el, t);
+        openTaskComposer(t);
       }
       return;
     case 'Escape':
+      if (!$('overlay').classList.contains('hidden')) { e.preventDefault(); closeOverlay(); return; }
       if (state.selected.size) { e.preventDefault(); state.selected.clear(); render(); }
       return;
   }
-});
+}, true);
 
 load();

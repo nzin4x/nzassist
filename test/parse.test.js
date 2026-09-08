@@ -121,6 +121,16 @@ test('오후 표기', () => {
   assert.equal(r.start.dateTime, '2026-09-06T15:00:00');
 });
 
+test('내일 저녁 10시는 22시로 해석한다', () => {
+  const r = p('내일 저녁 10시에 강아지 밥 챙겨주기');
+  assert.equal(r.start.dateTime, '2026-09-07T22:00:00');
+});
+
+test('시간을 두 번 쓰면 마지막 시간이 우선한다', () => {
+  const r = p('회의 00:17 이후 20:00');
+  assert.equal(r.start.dateTime, '2026-09-06T20:00:00');
+});
+
 test('내일', () => {
   const r = p('내일 세탁소 들르기');
   assert.equal(r.start.dateTime, '2026-09-07T09:00:00');

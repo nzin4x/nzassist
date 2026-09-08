@@ -1,4 +1,4 @@
-const CACHE = 'nzassist-v2';
+const CACHE = 'nzassist-v7';
 const ASSETS = ['/', '/index.html', '/styles.css', '/app.js', '/manifest.webmanifest', '/logo.svg', '/privacy.html', '/terms.html'];
 self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS))));
 self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));

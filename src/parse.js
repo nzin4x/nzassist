@@ -169,27 +169,36 @@ export function toRrule(repeat) {
 
 function extractTime(text) {
   let rest = text;
+  const candidates = [];
 
-  let m = rest.match(/(?:\bat\s+)?\b([01]?\d|2[0-3]):([0-5]\d)\b/);
-  if (m) return { rest: cut(rest, m[0]), time: { h: Number(m[1]), mi: Number(m[2]) } };
+  const add = (match, h, mi) => { if (match) candidates.push({ match, h, mi, index: match.index }); };
+
+  let m;
+  for (const match of rest.matchAll(/(?:\bat\s+)?\b([01]?\d|2[0-3]):([0-5]\d)\b/g)) {
+    add(match, Number(match[1]), Number(match[2]));
+  }
 
   // 7am / 7 pm  (실제 데이터: "every day 7am", "ev day 7 pm")
-  m = rest.match(/(?:\bat\s+)?\b(\d{1,2})\s*(am|pm)\b/i);
-  if (m) {
-    let h = Number(m[1]) % 12;
-    if (m[2].toLowerCase() === 'pm') h += 12;
-    return { rest: cut(rest, m[0]), time: { h, mi: 0 } };
+  for (const match of rest.matchAll(/(?:\bat\s+)?\b(\d{1,2})\s*(am|pm)\b/gi)) {
+    let h = Number(match[1]) % 12;
+    if (match[2].toLowerCase() === 'pm') h += 12;
+    add(match, h, 0);
   }
 
-  m = rest.match(/(오전|오후)?\s*(\d{1,2})\s*시\s*(?:(\d{1,2})\s*분)?/);
-  if (m) {
-    let h = Number(m[2]);
-    if (m[1] === '오후' && h < 12) h += 12;
-    if (m[1] === '오전' && h === 12) h = 0;
-    return { rest: cut(rest, m[0]), time: { h, mi: m[3] ? Number(m[3]) : 0 } };
+  for (const match of rest.matchAll(/(오전|오후|저녁|밤|아침)?\s*(\d{1,2})\s*시\s*(?:(\d{1,2})\s*분)?/g)) {
+    let h = Number(match[2]);
+    if (['오후', '저녁', '밤'].includes(match[1]) && h < 12) h += 12;
+    if (['오전', '아침'].includes(match[1]) && h === 12) h = 0;
+    add(match, h, match[3] ? Number(match[3]) : 0);
   }
 
-  return { rest, time: null };
+  const selected = candidates.sort((a, b) => a.index - b.index).at(-1);
+  if (!selected) return { rest, time: null };
+  let cleaned = rest;
+  for (const candidate of [...candidates].sort((a, b) => b.index - a.index)) {
+    cleaned = `${cleaned.slice(0, candidate.index)} ${cleaned.slice(candidate.index + candidate.match[0].length)}`;
+  }
+  return { rest: cleaned, time: { h: selected.h, mi: selected.mi } };
 }
 
 // --- 날짜 -------------------------------------------------------------------

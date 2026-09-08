@@ -15,6 +15,14 @@
     <main class="shell">
       <header class="topbar">
         <a class="brand" href="/" aria-label="nzassist 홈"><img class="brand-logo" src="/logo.svg" alt="" /><span>assist</span></a>
+        <div class="search-wrap" id="search-wrap">
+          <button id="search-toggle" class="search-icon" type="button" aria-label="검색 열기" title="검색 열기">⌕</button>
+          <input id="search" autocomplete="off" spellcheck="false"
+                 placeholder="검색   ·   #태그 @컨텍스트   ·   updated < 1d   ·   created < 10d and #급함" />
+          <button id="search-clear" class="search-action" type="button" aria-label="검색어 지우기" title="검색어 지우기">×</button>
+          <button id="search-close" class="search-action" type="button" aria-label="검색 닫기" title="검색 닫기">×</button>
+          <div id="search-suggest" class="suggest hidden" role="listbox"></div>
+        </div>
         <div class="account-bar">
           <span class="account-name hidden" id="account-name"></span>
           <button class="account-action" id="login" type="button">Google 로그인</button>
@@ -22,32 +30,6 @@
           <div class="status-pill"><span class="status-dot" id="status-dot"></span><span id="status">연결 중…</span></div>
         </div>
       </header>
-
-      <div class="search-wrap" id="search-wrap">
-        <button id="search-toggle" class="search-icon" type="button" aria-label="검색 열기" title="검색 열기">⌕</button>
-        <input id="search" autocomplete="off" spellcheck="false"
-               placeholder="검색   ·   #태그 @컨텍스트   ·   updated < 1d   ·   created < 10d and #급함" />
-        <button id="search-clear" class="search-action" type="button" aria-label="검색어 지우기" title="검색어 지우기">×</button>
-        <button id="search-close" class="search-action" type="button" aria-label="검색 닫기" title="검색 닫기">×</button>
-        <div id="search-suggest" class="suggest hidden" role="listbox"></div>
-      </div>
-
-      <form id="capture" class="capture">
-        <div class="capture-wrap" id="capture-wrap">
-          <input id="input" autocomplete="off" spellcheck="false"
-                 placeholder="노트북 반품하기 19:00   ·   @미혜 불꽃놀이 9/5   ·   가습기 청소 every! 2 weeks" />
-          <div id="suggest" class="suggest hidden" role="listbox"></div>
-        </div>
-        <button type="submit" class="primary">추가</button>
-      </form>
-
-      <section id="preview" class="preview hidden" aria-live="polite">
-        <div class="preview-row">
-          <span class="preview-title" id="pv-title"></span>
-          <span class="chips" id="pv-chips"></span>
-        </div>
-        <div class="preview-warn" id="pv-warn"></div>
-      </section>
 
       <nav class="filters" id="filters">
         <button data-filter="overdue" class="filter">밀린 항목 <span class="n" id="n-overdue">0</span></button>
@@ -70,6 +52,7 @@
         <span class="legal-links"><a href="/privacy">개인정보처리방침</a><a href="/terms">서비스 약관</a></span>
       </footer>
     </main>
+    <button id="new-task-fab" class="new-task-fab" type="button" aria-label="새 할 일" title="새 할 일">+</button>
     <div id="overlay" class="overlay hidden"></div>
     <script src="/config.js" onerror="window.NZASSIST_CONFIG = {}"></script>
     <script type="module" src="/app.js"></script>
